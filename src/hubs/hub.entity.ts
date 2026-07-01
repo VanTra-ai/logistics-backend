@@ -1,0 +1,25 @@
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+
+@Entity('hubs')
+export class Hub {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column()
+  name!: string;
+
+  @Column('text')
+  address!: string;
+
+  @CreateDateColumn()
+  created_at!: Date;
+
+  @UpdateDateColumn()
+  updated_at!: Date;
+}
