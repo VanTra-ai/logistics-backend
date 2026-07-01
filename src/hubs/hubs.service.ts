@@ -28,4 +28,9 @@ export class HubsService {
       order: { created_at: 'DESC' }, // Sắp xếp bưu cục mới tạo lên đầu
     });
   }
+
+  //3. Tìm bưu cục
+  async findById(id: string): Promise<Hub | null> {
+    return await this.hubsRepository.findOne({ where: { id } });
+  }
 }
