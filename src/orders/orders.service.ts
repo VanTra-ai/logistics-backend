@@ -125,4 +125,16 @@ export class OrdersService {
       },
     });
   }
+
+  async findByTrackingNumber(trackingNumber: string): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { tracking_number: trackingNumber },
+      relations: { pickup_hub: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Không tìm thấy đơn hàng với mã này!');
+    }
+    return order;
+  }
 }

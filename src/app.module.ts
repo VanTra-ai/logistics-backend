@@ -11,6 +11,7 @@ import { AuthModule } from './auth/auth.module';
 import { HubsModule } from './hubs/hubs.module';
 import { OrdersModule } from './orders/orders.module';
 import { TrackingsModule } from './trackings/trackings.module';
+import { OrdersPublicController } from './orders/orders-public.controller';
 
 @Module({
   imports: [
@@ -31,5 +32,6 @@ import { TrackingsModule } from './trackings/trackings.module';
     OrdersModule,
     TrackingsModule,
   ],
+  controllers: [OrdersPublicController],
 })
 export class AppModule {}
