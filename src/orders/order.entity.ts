@@ -4,6 +4,7 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
 } from 'typeorm';
 import { User } from '../users/user.entity';
@@ -49,6 +50,16 @@ export class Order {
 
   @Column('text', { nullable: true })
   delivery_image_url!: string; // Hình xác nhận
+
+  // Thêm vào bên trong class Order
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  shipping_fee!: number;
+
+  @Column({ default: 'PENDING' })
+  cod_status!: string;
+
+  @DeleteDateColumn()
+  deleted_at?: Date;
 
   // 5. Quan hệ
   @ManyToOne(() => User, { nullable: true })

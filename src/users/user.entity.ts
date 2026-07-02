@@ -4,7 +4,9 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  ManyToOne,
 } from 'typeorm';
+import { Hub } from '../hubs/hub.entity';
 
 @Entity('users')
 export class User {
@@ -28,6 +30,21 @@ export class User {
 
   @Column()
   role!: string;
+
+  @Column({ nullable: true })
+  refresh_token!: string;
+
+  @Column({ nullable: true })
+  device_token!: string;
+
+  @Column({ default: 'UNVERIFIED' })
+  ekyc_status!: string;
+
+  @Column({ nullable: true })
+  cccd_number!: string;
+
+  @ManyToOne(() => Hub, { nullable: true })
+  hub!: Hub;
 
   @CreateDateColumn()
   created_at!: Date;

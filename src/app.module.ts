@@ -1,4 +1,7 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './users/user.entity';
@@ -11,7 +14,6 @@ import { AuthModule } from './auth/auth.module';
 import { HubsModule } from './hubs/hubs.module';
 import { OrdersModule } from './orders/orders.module';
 import { TrackingsModule } from './trackings/trackings.module';
-import { OrdersPublicController } from './orders/orders-public.controller';
 
 @Module({
   imports: [
@@ -32,6 +34,16 @@ import { OrdersPublicController } from './orders/orders-public.controller';
     OrdersModule,
     TrackingsModule,
   ],
-  controllers: [OrdersPublicController],
+  controllers: [],
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: AllExceptionsFilter,
+    },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(LoggerMiddleware).forRoutes('*'); // Áp dụng cho mọi route
+  }
+}
