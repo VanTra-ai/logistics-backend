@@ -28,11 +28,11 @@ export class User {
   @Column({ default: 'ACTIVE' })
   status!: string;
 
-  @Column()
-  role!: string;
+  @Column({ default: 'CUSTOMER' })
+  role!: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR' | 'CUSTOMER';
 
-  @Column({ nullable: true })
-  refresh_token!: string;
+  @Column({ type: 'varchar', nullable: true })
+  refresh_token!: string | null;
 
   @Column({ nullable: true })
   device_token!: string;

@@ -2,7 +2,7 @@ import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
 import { HubsService, CreateHubDto } from './hubs.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('hubs')
 export class HubsController {

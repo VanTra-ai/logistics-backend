@@ -7,9 +7,8 @@ import { User } from './user.entity';
 @Module({
   // Đăng ký Repository của User
   imports: [TypeOrmModule.forFeature([User])],
+  exports: [TypeOrmModule, UsersService],
   providers: [UsersService],
   controllers: [UsersController],
-  // Export ra để AuthModule sử dụng lại
-  exports: [UsersService],
 })
 export class UsersModule {}
