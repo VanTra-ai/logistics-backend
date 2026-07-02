@@ -1,9 +1,18 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
-import { TrackingsService } from '../trackings/trackings.service'; // <-- Phải import ở đây
+import { TrackingsService } from '../trackings/trackings.service';
+
+interface OrderStats {
+  status: string;
+  count: string | number;
+}
 
 export class CreateOrderDto {
   sender_name!: string;
@@ -73,11 +82,11 @@ export class OrdersService {
     const savedOrder = await this.ordersRepository.save(newOrder);
 
     // Tự động ghi lại lịch sử mốc đầu tiên
-    await this.trackingsService.addTrackingRecord(
-      savedOrder,
-      'PENDING',
-      'Đơn hàng được tạo mới và chờ lấy hàng',
-    );
+    await this.trackingsService.addTrackingRecord({
+      order: savedOrder,
+      status: 'PENDING',
+      note: 'Đơn hàng được tạo mới và chờ lấy hàng',
+    });
 
     return savedOrder;
   }
@@ -105,14 +114,14 @@ export class OrdersService {
       : `Trạng thái đơn hàng cập nhật thành ${data.status}`;
 
     // Tự động ghi lịch sử
-    await this.trackingsService.addTrackingRecord(
-      updatedOrder,
-      data.status,
-      trackingNote,
-      data.lat,
-      data.long,
-      data.incident_image_url,
-    );
+    await this.trackingsService.addTrackingRecord({
+      order: updatedOrder,
+      status: data.status,
+      note: trackingNote,
+      lat: data.lat,
+      long: data.long,
+      imageUrl: data.incident_image_url,
+    });
 
     return updatedOrder;
   }
@@ -135,6 +144,67 @@ export class OrdersService {
     if (!order) {
       throw new NotFoundException('Không tìm thấy đơn hàng với mã này!');
     }
+    return order;
+  }
+
+  async getStatistics() {
+    const stats: OrderStats[] = await this.ordersRepository
+      .createQueryBuilder('order')
+      .select('order.current_status', 'status')
+      .addSelect('COUNT(order.id)', 'count')
+      .groupBy('order.current_status')
+      .getRawMany();
+
+    const allStatuses = ['PENDING', 'DELIVERING', 'FINISHED', 'CANCELLED'];
+
+    return {
+      message: 'Lấy thống kê đơn hàng thành công!',
+      data: allStatuses.map((status) => {
+        const found = stats.find((s) => s.status === status);
+        return {
+          status,
+          count: found ? parseInt(found.count as string, 10) : 0,
+        };
+      }),
+    };
+  }
+
+  async cancelOrder(
+    id: string,
+    reason: string,
+    cancelledBy: 'CUSTOMER' | 'SHIPPER',
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({ where: { id } });
+
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    // Logic nghiệp vụ chặt chẽ:
+    // - Khách chỉ được hủy khi PENDING
+    // - Shipper chỉ được hủy khi DELIVERING
+    if (cancelledBy === 'CUSTOMER' && order.current_status !== 'PENDING') {
+      throw new BadRequestException(
+        'Khách hàng chỉ được hủy khi đơn đang PENDING!',
+      );
+    }
+
+    if (cancelledBy === 'SHIPPER' && order.current_status !== 'DELIVERING') {
+      throw new BadRequestException(
+        'Shipper chỉ được hủy đơn khi đang DELIVERING!',
+      );
+    }
+
+    // Cập nhật trạng thái
+    order.current_status = 'CANCELLED';
+    await this.ordersRepository.save(order);
+
+    // Ghi log vào tracking với note phân loại người hủy
+    const actor = cancelledBy === 'CUSTOMER' ? 'Khách hàng' : 'Shipper';
+    await this.trackingsService.addTrackingRecord({
+      order: order,
+      status: 'CANCELLED',
+      note: `Đơn hàng đã bị hủy bởi ${actor}. Lý do: ${reason}`,
+    });
+
     return order;
   }
 }

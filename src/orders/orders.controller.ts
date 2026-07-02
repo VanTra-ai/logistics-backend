@@ -51,4 +51,25 @@ export class OrdersController {
       data: order,
     };
   }
+
+  @Get('statistics')
+  @UseGuards(AuthGuard('jwt')) // Chỉ Admin mới được xem
+  async getStatistics() {
+    return await this.ordersService.getStatistics();
+  }
+
+  @Patch(':id/cancel')
+  @UseGuards(AuthGuard('jwt'))
+  async cancelOrder(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @Body('cancelledBy') cancelledBy: 'CUSTOMER' | 'SHIPPER', // Nhận thêm giá trị này
+  ) {
+    // Mặc định là CUSTOMER nếu không truyền lên
+    return await this.ordersService.cancelOrder(
+      id,
+      reason,
+      cancelledBy || 'CUSTOMER',
+    );
+  }
 }

@@ -4,6 +4,15 @@ import { Repository } from 'typeorm';
 import { TrackingHistory } from './tracking.entity';
 import { Order } from '../orders/order.entity';
 
+interface TrackingData {
+  order: Order;
+  status: string;
+  note?: string;
+  lat?: number;
+  long?: number;
+  imageUrl?: string;
+}
+
 @Injectable()
 export class TrackingsService {
   constructor(
@@ -11,24 +20,15 @@ export class TrackingsService {
     private trackingsRepository: Repository<TrackingHistory>,
   ) {}
 
-  // Hàm tự động ghi lại lịch sử đơn hàng (Hỗ trợ thêm GPS và Ảnh)
-  async addTrackingRecord(
-    order: Order,
-    status: string,
-    note?: string,
-    lat?: number,
-    long?: number,
-    imageUrl?: string,
-  ): Promise<TrackingHistory> {
+  async addTrackingRecord(data: TrackingData): Promise<TrackingHistory> {
     const newTracking = this.trackingsRepository.create({
-      order: order,
-      status: status,
-      note: note || '',
-      lat: lat,
-      long: long,
-      image_url: imageUrl,
+      order: data.order,
+      status: data.status,
+      note: data.note || '',
+      lat: data.lat,
+      long: data.long,
+      image_url: data.imageUrl,
     });
-
     return await this.trackingsRepository.save(newTracking);
   }
 
