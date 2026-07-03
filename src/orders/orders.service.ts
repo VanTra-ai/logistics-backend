@@ -4,10 +4,18 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
 import { TrackingsService } from '../trackings/trackings.service';
+import { User } from '../users/user.entity';
+import {
+  IsNotEmpty,
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsArray,
+} from 'class-validator';
 
 interface OrderStats {
   status: string;
@@ -15,25 +23,117 @@ interface OrderStats {
 }
 
 export class CreateOrderDto {
+  @IsString()
+  @IsNotEmpty()
   sender_name!: string;
+
+  @IsString()
+  @IsNotEmpty()
   sender_phone!: string;
+
+  @IsString()
+  @IsNotEmpty()
   sender_address!: string;
+
+  @IsString()
+  @IsNotEmpty()
   receiver_name!: string;
+
+  @IsString()
+  @IsNotEmpty()
   receiver_phone!: string;
+
+  @IsString()
+  @IsNotEmpty()
   receiver_address!: string;
+
+  @IsNumber()
+  @IsNotEmpty()
   weight!: number;
+
+  @IsNumber()
+  @IsNotEmpty()
   cod_amount!: number;
+
+  @IsString()
+  @IsOptional()
   note?: string;
+
+  @IsString()
+  @IsNotEmpty()
   pickup_hub_id!: string;
+
+  @IsString()
+  @IsOptional()
+  shipper_id?: string;
 }
 
 export class UpdateOrderStatusDto {
+  @IsString()
+  @IsNotEmpty()
   status!: string;
+
+  @IsString()
+  @IsOptional()
   note?: string;
+
+  @IsNumber()
+  @IsOptional()
   lat?: number;
+
+  @IsNumber()
+  @IsOptional()
   long?: number;
+
+  @IsString()
+  @IsOptional()
   incident_image_url?: string;
+
+  @IsString()
+  @IsOptional()
   delivery_image_url?: string;
+}
+
+export class AssignShipperDto {
+  @IsString()
+  @IsNotEmpty()
+  shipper_id!: string;
+}
+
+export class ScanInDto {
+  @IsArray()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  tracking_numbers!: string[];
+}
+
+export class ScanOutDto {
+  @IsArray()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  tracking_numbers!: string[];
+
+  @IsString()
+  @IsNotEmpty()
+  shipper_id!: string;
+}
+
+export class CompleteOrderDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Bắt buộc phải có ảnh chụp xác nhận giao hàng!' })
+  delivery_image_url!: string;
+
+  @IsOptional()
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @IsNumber()
+  long?: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 @Injectable()
@@ -42,8 +142,10 @@ export class OrdersService {
   constructor(
     @InjectRepository(Order)
     private ordersRepository: Repository<Order>,
+    @InjectRepository(User)
+    private usersRepository: Repository<User>,
     private hubsService: HubsService,
-    private trackingsService: TrackingsService, // <-- Phải có dòng này thì this.trackingsService mới hoạt động
+    private trackingsService: TrackingsService,
   ) {}
 
   private generateTrackingNumber(): string {
@@ -56,7 +158,7 @@ export class OrdersService {
     return `${prefix}${year}${randomChars}`;
   }
 
-  async createOrder(data: CreateOrderDto): Promise<Order> {
+  async createOrder(data: CreateOrderDto, userId: string): Promise<Order> {
     const hub = await this.hubsService.findById(data.pickup_hub_id);
     if (!hub) {
       throw new NotFoundException('Bưu cục không tồn tại trong hệ thống!');
@@ -77,6 +179,7 @@ export class OrdersService {
       cod_amount: data.cod_amount,
       note: data.note,
       pickup_hub: hub,
+      customer: { id: userId },
     });
 
     const savedOrder = await this.ordersRepository.save(newOrder);
@@ -172,7 +275,7 @@ export class OrdersService {
   async cancelOrder(
     id: string,
     reason: string,
-    cancelledBy: 'CUSTOMER' | 'SHIPPER',
+    cancelledBy: 'CUSTOMER' | 'SHIPPER' | 'ADMIN',
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({ where: { id } });
 
@@ -181,6 +284,7 @@ export class OrdersService {
     // Logic nghiệp vụ chặt chẽ:
     // - Khách chỉ được hủy khi PENDING
     // - Shipper chỉ được hủy khi DELIVERING
+    // - Admin được hủy bất kỳ khi nào trừ FINISHED hoặc CANCELLED
     if (cancelledBy === 'CUSTOMER' && order.current_status !== 'PENDING') {
       throw new BadRequestException(
         'Khách hàng chỉ được hủy khi đơn đang PENDING!',
@@ -193,12 +297,25 @@ export class OrdersService {
       );
     }
 
+    if (
+      order.current_status === 'FINISHED' ||
+      order.current_status === 'CANCELLED'
+    ) {
+      throw new BadRequestException(
+        'Không thể hủy đơn hàng đã hoàn thành hoặc đã bị hủy!',
+      );
+    }
+
     // Cập nhật trạng thái
     order.current_status = 'CANCELLED';
     await this.ordersRepository.save(order);
 
     // Ghi log vào tracking với note phân loại người hủy
-    const actor = cancelledBy === 'CUSTOMER' ? 'Khách hàng' : 'Shipper';
+    let actor = 'Hệ thống';
+    if (cancelledBy === 'CUSTOMER') actor = 'Khách hàng';
+    else if (cancelledBy === 'SHIPPER') actor = 'Shipper';
+    else if (cancelledBy === 'ADMIN') actor = 'Quản trị viên';
+
     await this.trackingsService.addTrackingRecord({
       order: order,
       status: 'CANCELLED',
@@ -206,5 +323,252 @@ export class OrdersService {
     });
 
     return order;
+  }
+
+  async findMyOrders(userId: string, role: string): Promise<Order[]> {
+    // 1. Nếu là Shipper: Lọc các đơn hàng được giao cho Shipper này
+    if (role === 'SHIPPER') {
+      return await this.ordersRepository.find({
+        where: { shipper: { id: userId } },
+        order: { created_at: 'DESC' }, // Sắp xếp đơn mới nhất lên đầu
+        relations: { pickup_hub: true, customer: true },
+      });
+    }
+
+    // 2. Nếu là Customer (hoặc mặc định): Lọc các đơn hàng do người này tạo
+    return await this.ordersRepository.find({
+      where: { customer: { id: userId } },
+      order: { created_at: 'DESC' },
+      relations: { pickup_hub: true, shipper: true },
+    });
+  }
+
+  async assignShipper(orderId: string, shipperId: string): Promise<Order> {
+    // Trạm 1: Kiểm tra đơn hàng
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: { pickup_hub: true },
+    });
+
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+    if (order.current_status !== 'PENDING') {
+      throw new BadRequestException(
+        'Chỉ có thể điều phối đơn hàng đang ở trạng thái PENDING!',
+      );
+    }
+
+    // Trạm 2: Kiểm tra Shipper
+    const shipper = await this.usersRepository.findOne({
+      where: { id: shipperId },
+      relations: { hub: true },
+    });
+
+    if (!shipper)
+      throw new NotFoundException('Không tìm thấy nhân viên Shipper!');
+    if (shipper.role !== 'SHIPPER') {
+      throw new BadRequestException(
+        'Người dùng được gán không phải là Shipper!',
+      );
+    }
+
+    // Trạm 3 (Nâng cao): Kiểm tra tuyến bưu cục (Tránh giao nhầm tuyến)
+    // Nếu Shipper thuộc một bưu cục, mà đơn hàng lại ở bưu cục khác -> Chặn!
+    if (
+      shipper.hub &&
+      order.pickup_hub &&
+      shipper.hub.id !== order.pickup_hub.id
+    ) {
+      throw new BadRequestException(
+        'Shipper không thuộc bưu cục quản lý đơn hàng này!',
+      );
+    }
+
+    // Thực thi gán đơn và đổi trạng thái
+    order.shipper = shipper;
+    order.current_status = 'PICKING'; // Trạng thái chuyển thành "Đang đi lấy"
+
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // Ghi log hành trình
+    await this.trackingsService.addTrackingRecord({
+      order: savedOrder,
+      status: 'PICKING',
+      note: `Đơn hàng đã được phân công cho Shipper: ${shipper.full_name}`,
+    });
+
+    return savedOrder;
+  }
+
+  async scanInOrders(trackingNumbers: string[], actorName: string) {
+    if (!trackingNumbers || trackingNumbers.length === 0) {
+      throw new BadRequestException('Danh sách mã vận đơn trống!');
+    }
+
+    // 1. Tìm tất cả đơn hàng khớp với mảng mã vận đơn (Dùng toán tử In)
+    const orders = await this.ordersRepository.find({
+      where: { tracking_number: In(trackingNumbers) },
+    });
+
+    if (orders.length === 0) {
+      throw new NotFoundException('Không tìm thấy đơn hàng nào hợp lệ!');
+    }
+
+    // 2. Lọc ra những đơn hàng đủ điều kiện nhập kho
+    const validStatuses = ['PENDING', 'PICKING'];
+    const validOrders = orders.filter((order) =>
+      validStatuses.includes(order.current_status),
+    );
+
+    if (validOrders.length === 0) {
+      throw new BadRequestException(
+        'Các đơn hàng này đã được nhập kho hoặc không hợp lệ!',
+      );
+    }
+
+    // 3. Cập nhật trạng thái đồng loạt sang AT_HUB
+    for (const order of validOrders) {
+      order.current_status = 'AT_HUB';
+    }
+
+    // Lưu một mảng dữ liệu cùng lúc để tối ưu hiệu năng (Bulk Update)
+    await this.ordersRepository.save(validOrders);
+
+    // 4. Ghi log tracking đồng loạt bằng Promise.all
+    await Promise.all(
+      validOrders.map((order) =>
+        this.trackingsService.addTrackingRecord({
+          order: order,
+          status: 'AT_HUB',
+          note: `Đơn hàng đã được nhập kho bởi ${actorName}`,
+        }),
+      ),
+    );
+
+    // 5. Trả về thống kê cho Frontend báo cáo
+    return {
+      total_scanned: trackingNumbers.length,
+      success_count: validOrders.length,
+      failed_count: trackingNumbers.length - validOrders.length,
+      success_trackings: validOrders.map((o) => o.tracking_number),
+    };
+  }
+
+  async scanOutOrders(
+    trackingNumbers: string[],
+    shipperId: string,
+    actorName: string,
+  ) {
+    if (!trackingNumbers || trackingNumbers.length === 0) {
+      throw new BadRequestException('Danh sách mã vận đơn trống!');
+    }
+
+    // 1. Kiểm tra tính hợp lệ của Shipper nhận bàn giao
+    const shipper = await this.usersRepository.findOne({
+      where: { id: shipperId },
+    });
+    if (!shipper || shipper.role !== 'SHIPPER') {
+      throw new BadRequestException(
+        'ID Người giao hàng không hợp lệ hoặc không tồn tại!',
+      );
+    }
+
+    // 2. Lấy danh sách đơn hàng từ CSDL
+    const orders = await this.ordersRepository.find({
+      where: { tracking_number: In(trackingNumbers) },
+    });
+
+    if (orders.length === 0) {
+      throw new NotFoundException('Không tìm thấy mã vận đơn nào hợp lệ!');
+    }
+
+    // 3. Lọc các đơn hàng đủ điều kiện xuất kho (Phải đang nằm ở Hub)
+    const validOrders = orders.filter(
+      (order) => order.current_status === 'AT_HUB',
+    );
+
+    if (validOrders.length === 0) {
+      throw new BadRequestException(
+        'Các đơn hàng này chưa nhập kho hoặc không đủ điều kiện xuất kho!',
+      );
+    }
+
+    // 4. Cập nhật trạng thái và "sang tên" Shipper giao hàng
+    for (const order of validOrders) {
+      order.current_status = 'DELIVERING';
+      order.shipper = shipper; // Ghi đè Shipper đi lấy hàng bằng Shipper đi giao hàng
+    }
+
+    // Cập nhật hàng loạt (Bulk Update)
+    await this.ordersRepository.save(validOrders);
+
+    // 5. Ghi log hành trình đồng loạt
+    await Promise.all(
+      validOrders.map((order) =>
+        this.trackingsService.addTrackingRecord({
+          order: order,
+          status: 'DELIVERING',
+          note: `Đơn hàng đã xuất kho. Bàn giao cho Shipper: ${shipper.full_name} (${shipper.phone_number}). Thao tác bởi: ${actorName}`,
+        }),
+      ),
+    );
+
+    return {
+      total_scanned: trackingNumbers.length,
+      success_count: validOrders.length,
+      failed_count: trackingNumbers.length - validOrders.length,
+      success_trackings: validOrders.map((o) => o.tracking_number),
+      assigned_to: shipper.full_name,
+    };
+  }
+
+  async completeOrder(
+    orderId: string,
+    shipperId: string,
+    data: CompleteOrderDto,
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: { shipper: true }, // Phải gọi relation này ra để check ID
+    });
+
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    // Chốt chặn 1: Trạng thái
+    if (order.current_status !== 'DELIVERING') {
+      throw new BadRequestException(
+        'Chỉ có thể hoàn tất đơn hàng đang ở trạng thái DELIVERING!',
+      );
+    }
+
+    // Chốt chặn 2: Bảo mật phân quyền Shipper
+    if (!order.shipper || order.shipper.id !== shipperId) {
+      throw new BadRequestException(
+        'Bạn không có quyền thao tác trên đơn hàng của người khác!',
+      );
+    }
+
+    // Cập nhật dữ liệu
+    order.current_status = 'FINISHED';
+    order.delivery_image_url = data.delivery_image_url;
+
+    // Xử lý logic tiền thu hộ (COD)
+    // Chuyển trạng thái sang COLLECTED (Shipper đã cầm tiền khách, chờ nộp về bưu cục)
+    if (order.cod_amount > 0) {
+      order.cod_status = 'COLLECTED';
+    }
+
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // Ghi log hành trình chốt hạ (kèm tọa độ GPS cuối cùng)
+    await this.trackingsService.addTrackingRecord({
+      order: savedOrder,
+      status: 'FINISHED',
+      note: data.note || 'Giao hàng thành công. Khách đã nhận hàng.',
+      lat: data.lat,
+      long: data.long,
+      imageUrl: data.delivery_image_url,
+    });
+
+    return savedOrder;
   }
 }

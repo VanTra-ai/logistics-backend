@@ -68,6 +68,9 @@ export class Order {
   @ManyToOne(() => Hub)
   pickup_hub!: Hub;
 
+  @ManyToOne(() => User, { nullable: true })
+  customer!: User;
+
   @CreateDateColumn()
   created_at!: Date;
 
