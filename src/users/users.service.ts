@@ -1,4 +1,8 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
@@ -6,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { CreateInternalUserDto } from './dto/create-internal-user.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
 import { Role } from '../common/enums/role.enum';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UsersService {
@@ -81,5 +86,73 @@ export class UsersService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password_hash, ...result } = savedUser;
     return result as User;
+  }
+
+  async findOneById(userId: string): Promise<User> {
+    const user = await this.usersRepository.findOne({
+      where: { id: userId },
+      relations: { hub: true },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        role: true,
+        phone_number: true,
+        address: true,
+        hub: {
+          id: true,
+          name: true,
+          address: true,
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng!');
+    }
+
+    return user;
+  }
+
+  async updateProfile(
+    userId: string,
+    dto: UpdateProfileDto,
+  ): Promise<Partial<User>> {
+    // 1. Tìm user hiện tại
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại!');
+    }
+
+    // 2. Cập nhật các trường được phép
+    if (dto.fullName) {
+      user.full_name = dto.fullName; // Map đúng tên cột trong DB
+    }
+
+    if (dto.phone_number) {
+      // Kiểm tra xem số điện thoại mới có bị trùng với ai khác không
+      const existPhone = await this.usersRepository.findOne({
+        where: { phone_number: dto.phone_number },
+      });
+
+      if (existPhone && existPhone.id !== userId) {
+        throw new ConflictException(
+          'Số điện thoại này đã được sử dụng bởi tài khoản khác!',
+        );
+      }
+      user.phone_number = dto.phone_number;
+    }
+
+    if (dto.address !== undefined) {
+      user.address = dto.address;
+    }
+
+    // 3. Lưu vào Database
+    await this.usersRepository.save(user);
+
+    // 4. Bóc tách loại bỏ dữ liệu nhạy cảm trước khi trả về
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password_hash, refresh_token, ...safeUser } = user;
+    return safeUser;
   }
 }

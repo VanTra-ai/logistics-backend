@@ -19,6 +19,9 @@ export class User {
   @Column({ unique: true })
   phone_number!: string;
 
+  @Column({ type: 'text', nullable: true })
+  address?: string;
+
   @Column()
   password_hash!: string;
 

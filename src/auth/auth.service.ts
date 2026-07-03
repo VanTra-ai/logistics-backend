@@ -60,4 +60,48 @@ export class AuthService {
   async logout(userId: string): Promise<void> {
     await this.usersRepository.update(userId, { refresh_token: null });
   }
+
+  async refreshToken(refreshToken: string) {
+    try {
+      // 1. Ép kiểu rõ ràng cho payload để ESLint không báo lỗi "any"
+      const payload = await this.jwtService.verifyAsync<{ sub: string }>(
+        refreshToken,
+      );
+
+      // 2. Tìm user trong CSDL
+      const user = await this.usersRepository.findOne({
+        where: { id: payload.sub },
+      });
+
+      // 3. Kiểm tra tính hợp lệ
+      if (!user || user.refresh_token !== refreshToken) {
+        throw new UnauthorizedException(
+          'Refresh token không hợp lệ hoặc đã bị thu hồi!',
+        );
+      }
+
+      // 4. Tạo cặp Token mới
+      const newPayload = { email: user.email, sub: user.id, role: user.role };
+      const new_access_token = this.jwtService.sign(newPayload);
+      const new_refresh_token = this.jwtService.sign(newPayload, {
+        expiresIn: '7d',
+      });
+
+      // 5. Cập nhật refresh_token mới vào Database
+      await this.usersRepository.update(user.id, {
+        refresh_token: new_refresh_token,
+      });
+
+      // 6. Trả về cho Client
+      return {
+        access_token: new_access_token,
+        refresh_token: new_refresh_token,
+      };
+    } catch {
+      // Bỏ chữ (error) đi vì chúng ta không sử dụng biến này bên trong
+      throw new UnauthorizedException(
+        'Refresh token đã hết hạn hoặc không hợp lệ, vui lòng đăng nhập lại!',
+      );
+    }
+  }
 }
