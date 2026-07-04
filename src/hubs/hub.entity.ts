@@ -22,4 +22,7 @@ export class Hub {
 
   @UpdateDateColumn()
   updated_at!: Date;
+
+  @Column({ default: true })
+  is_active!: boolean;
 }

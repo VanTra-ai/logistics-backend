@@ -23,6 +23,8 @@ import { OrdersModule } from './orders/orders.module';
 import { TrackingsModule } from './trackings/trackings.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { RatingsModule } from './ratings/ratings.module';
+import { ShipmentsModule } from './shipments/shipments.module';
+import { StatisticsModule } from './statistics/statistics.module';
 
 @Module({
   imports: [
@@ -55,6 +57,8 @@ import { RatingsModule } from './ratings/ratings.module';
     TrackingsModule,
     TicketsModule,
     RatingsModule,
+    ShipmentsModule,
+    StatisticsModule,
   ],
   controllers: [],
   providers: [

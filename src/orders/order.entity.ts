@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
+import { Shipment } from '../shipments/shipment.entity';
 
 @Entity('orders')
 export class Order {
@@ -70,6 +71,9 @@ export class Order {
 
   @ManyToOne(() => User, { nullable: true })
   customer!: User;
+
+  @ManyToOne(() => Shipment, (shipment) => shipment.orders, { nullable: true })
+  shipment!: Shipment;
 
   @CreateDateColumn()
   created_at!: Date;
