@@ -21,6 +21,8 @@ import { AuthModule } from './auth/auth.module';
 import { HubsModule } from './hubs/hubs.module';
 import { OrdersModule } from './orders/orders.module';
 import { TrackingsModule } from './trackings/trackings.module';
+import { TicketsModule } from './tickets/tickets.module';
+import { RatingsModule } from './ratings/ratings.module';
 
 @Module({
   imports: [
@@ -51,6 +53,8 @@ import { TrackingsModule } from './trackings/trackings.module';
     HubsModule,
     OrdersModule,
     TrackingsModule,
+    TicketsModule,
+    RatingsModule,
   ],
   controllers: [],
   providers: [

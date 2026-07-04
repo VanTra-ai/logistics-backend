@@ -16,6 +16,10 @@ import {
   ScanInDto,
   ScanOutDto,
   CompleteOrderDto,
+  ReturnOrderDto,
+  RetryOrderDto,
+  RtsOrderDto,
+  RemitOrdersDto,
 } from './orders.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -185,6 +189,91 @@ export class OrdersController {
     return {
       message: 'Hoàn tất giao hàng thành công!',
       data: order,
+    };
+  }
+
+  @Patch(':id/return')
+  @Roles('SHIPPER', 'ADMIN') // Cho phép cả Shipper và Admin thao tác
+  @UseGuards(RolesGuard)
+  async returnOrder(
+    @Param('id') id: string,
+    @Body() returnOrderDto: ReturnOrderDto,
+    @Request() req: { user: { userId: string; role: string } },
+  ) {
+    // Truyền userId và role xuống Service để xử lý logic phân quyền
+    const order = await this.ordersService.returnOrder(
+      id,
+      req.user.userId,
+      req.user.role,
+      returnOrderDto,
+    );
+
+    return {
+      message: 'Báo cáo hoàn hàng thành công!',
+      data: order,
+    };
+  }
+
+  @Patch(':id/retry')
+  @Roles('ADMIN') // API dành cho bộ phận vận hành bưu cục
+  @UseGuards(RolesGuard)
+  async retryDelivery(
+    @Param('id') id: string,
+    @Body() retryOrderDto: RetryOrderDto,
+    @Request() req: { user: { role: string } },
+  ) {
+    const actor =
+      req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Điều phối viên';
+    const order = await this.ordersService.retryDelivery(
+      id,
+      retryOrderDto,
+      actor,
+    );
+
+    return {
+      message: 'Cập nhật lệnh giao lại thành công!',
+      data: order,
+    };
+  }
+
+  @Patch(':id/rts')
+  @Roles('ADMIN')
+  @UseGuards(RolesGuard)
+  async returnToSender(
+    @Param('id') id: string,
+    @Body() rtsOrderDto: RtsOrderDto,
+    @Request() req: { user: { role: string } },
+  ) {
+    const actor =
+      req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Điều phối viên';
+    const order = await this.ordersService.returnToSender(
+      id,
+      rtsOrderDto,
+      actor,
+    );
+
+    return {
+      message: 'Đã chốt chuyển hoàn đơn hàng về cho người gửi!',
+      data: order,
+    };
+  }
+
+  @Post('remit')
+  @Roles('ADMIN') // Chỉ Kế toán hoặc Quản lý bưu cục mới được quyền thu tiền
+  @UseGuards(RolesGuard)
+  async remitCOD(
+    @Body() remitOrdersDto: RemitOrdersDto,
+    @Request() req: { user: { role: string } },
+  ) {
+    const actor = req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Kế toán';
+    const result = await this.ordersService.remitCOD(
+      remitOrdersDto.order_ids,
+      actor,
+    );
+
+    return {
+      message: 'Nộp tiền COD về bưu cục thành công!',
+      data: result,
     };
   }
 }

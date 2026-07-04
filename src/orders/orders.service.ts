@@ -15,6 +15,7 @@ import {
   IsOptional,
   IsNumber,
   IsArray,
+  ArrayNotEmpty,
 } from 'class-validator';
 
 interface OrderStats {
@@ -134,6 +135,44 @@ export class CompleteOrderDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+export class ReturnOrderDto {
+  @IsString()
+  @IsNotEmpty({
+    message: 'Bắt buộc phải nhập lý do hoàn hàng (VD: Khách không nghe máy)!',
+  })
+  reason!: string;
+
+  @IsOptional()
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @IsNumber()
+  long?: number;
+}
+
+export class RetryOrderDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Bắt buộc phải chọn Shipper để đi giao lại!' })
+  shipper_id!: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class RtsOrderDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class RemitOrdersDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Danh sách đơn hàng không được để trống!' })
+  order_ids!: string[]; // Truyền lên một mảng các ID đơn hàng cần chốt tiền
 }
 
 @Injectable()
@@ -570,5 +609,181 @@ export class OrdersService {
     });
 
     return savedOrder;
+  }
+
+  async returnOrder(
+    orderId: string,
+    userId: string,
+    role: string,
+    data: ReturnOrderDto,
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: { shipper: true },
+    });
+
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    // 1. Kiểm tra trạng thái hợp lệ
+    if (order.current_status !== 'DELIVERING') {
+      throw new BadRequestException(
+        'Chỉ có thể báo hoàn hàng khi đơn đang ở trạng thái DELIVERING!',
+      );
+    }
+
+    // 2. Chốt chặn phân quyền: Nếu là Shipper thì phải là chủ đơn hàng
+    if (role === 'SHIPPER' && (!order.shipper || order.shipper.id !== userId)) {
+      throw new BadRequestException(
+        'Bạn không có quyền báo hoàn cho đơn hàng của người khác!',
+      );
+    }
+
+    // 3. Cập nhật trạng thái
+    order.current_status = 'RETURNING';
+
+    // (Tùy chọn) Có thể reset cod_status nếu trước đó đang có logic khác,
+    // nhưng thường đơn hoàn thì không thu tiền COD.
+
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // 4. Ghi log hành trình
+    await this.trackingsService.addTrackingRecord({
+      order: savedOrder,
+      status: 'RETURNING',
+      note: `Giao hàng thất bại. Đang chuyển hoàn về bưu cục. Lý do: ${data.reason}`,
+      lat: data.lat,
+      long: data.long,
+    });
+
+    return savedOrder;
+  }
+
+  // Hàm Xử lý Giao lại (Retry Delivery)
+  async retryDelivery(
+    orderId: string,
+    data: RetryOrderDto,
+    actorName: string,
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    if (order.current_status !== 'AT_HUB') {
+      throw new BadRequestException(
+        'Chỉ có thể giao lại đơn hàng đang lưu kho (AT_HUB)!',
+      );
+    }
+
+    const shipper = await this.usersRepository.findOne({
+      where: { id: data.shipper_id },
+    });
+    if (!shipper || shipper.role !== 'SHIPPER') {
+      throw new BadRequestException('ID Shipper nhận bàn giao không hợp lệ!');
+    }
+
+    // Cập nhật trạng thái và bàn giao cho Shipper mới (hoặc cũ)
+    order.current_status = 'DELIVERING';
+    order.shipper = shipper;
+
+    const savedOrder = await this.ordersRepository.save(order);
+
+    await this.trackingsService.addTrackingRecord({
+      order: savedOrder,
+      status: 'DELIVERING',
+      note:
+        data.note ||
+        `Đơn hàng được xuất kho để giao lại lần nữa. Bàn giao cho: ${shipper.full_name}. Thao tác bởi: ${actorName}`,
+    });
+
+    return savedOrder;
+  }
+
+  // Hàm Xử lý Chuyển hoàn (Return To Sender)
+  async returnToSender(
+    orderId: string,
+    data: RtsOrderDto,
+    actorName: string,
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    if (order.current_status !== 'AT_HUB') {
+      throw new BadRequestException(
+        'Chỉ có thể chuyển hoàn đơn hàng đang lưu kho (AT_HUB)!',
+      );
+    }
+
+    // Chốt trạng thái hoàn vĩnh viễn
+    order.current_status = 'RETURNED_TO_SENDER';
+
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // Ghi log
+    const noteReason = data.reason ? ` Lý do: ${data.reason}` : '';
+    await this.trackingsService.addTrackingRecord({
+      order: savedOrder,
+      status: 'RETURNED_TO_SENDER',
+      note: `Đơn hàng xuất kho, chuyển hoàn về cho người gửi.${noteReason} Thao tác bởi: ${actorName}`,
+    });
+
+    return savedOrder;
+  }
+
+  async remitCOD(orderIds: string[], adminName: string) {
+    // 1. Tìm các đơn hàng
+    const orders = await this.ordersRepository.find({
+      where: { id: In(orderIds) },
+      relations: { shipper: true },
+    });
+
+    if (orders.length === 0)
+      throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    // 2. Lọc ra các đơn hàng ĐỦ ĐIỀU KIỆN nộp tiền:
+    // - Trạng thái phải là FINISHED
+    // - Phải có tiền COD > 0
+    // - cod_status phải đang là COLLECTED (chưa nộp)
+    const validOrders = orders.filter(
+      (order) =>
+        order.current_status === 'FINISHED' &&
+        order.cod_amount > 0 &&
+        order.cod_status === 'COLLECTED',
+    );
+
+    if (validOrders.length === 0) {
+      throw new BadRequestException(
+        'Các đơn hàng này không có COD hoặc đã được nộp tiền trước đó!',
+      );
+    }
+
+    let totalAmount = 0;
+
+    // 3. Chuyển trạng thái sang Đã nộp quỹ
+    for (const order of validOrders) {
+      order.cod_status = 'REMITTED';
+      totalAmount += Number(order.cod_amount);
+    }
+
+    await this.ordersRepository.save(validOrders);
+
+    // 4. (Tùy chọn) Ghi log
+    await Promise.all(
+      validOrders.map((order) =>
+        this.trackingsService.addTrackingRecord({
+          order: order,
+          status: 'FINISHED',
+          note: `Đã đối soát tiền thu hộ (COD) thành công. Người thu: ${adminName}`,
+        }),
+      ),
+    );
+
+    return {
+      total_orders_remitted: validOrders.length,
+      total_money_collected: totalAmount, // Tổng số tiền Admin đã thu vào két
+      failed_orders: orderIds.length - validOrders.length,
+    };
   }
 }
