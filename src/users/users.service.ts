@@ -155,4 +155,82 @@ export class UsersService {
     const { password_hash, refresh_token, ...safeUser } = user;
     return safeUser;
   }
+
+  async findAllUsers(): Promise<User[]> {
+    return this.usersRepository.find({
+      relations: { hub: true },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        role: true,
+        phone_number: true,
+        address: true,
+        status: true,
+        created_at: true,
+        updated_at: true,
+        hub: {
+          id: true,
+          name: true,
+        },
+      },
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  async adminUpdateUser(
+    userId: string,
+    dto: {
+      fullName?: string;
+      phone_number?: string;
+      address?: string;
+      role?: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR' | 'CUSTOMER';
+      hubId?: string;
+      status?: string;
+    },
+  ): Promise<User> {
+    const user = await this.usersRepository.findOne({
+      where: { id: userId },
+      relations: { hub: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng!');
+    }
+
+    if (dto.fullName) user.full_name = dto.fullName;
+
+    if (dto.phone_number) {
+      const existPhone = await this.usersRepository.findOne({
+        where: { phone_number: dto.phone_number },
+      });
+      if (existPhone && existPhone.id !== userId) {
+        throw new ConflictException(
+          'Số điện thoại này đã được sử dụng bởi tài khoản khác!',
+        );
+      }
+      user.phone_number = dto.phone_number;
+    }
+
+    if (dto.address !== undefined) user.address = dto.address;
+    if (dto.role) user.role = dto.role;
+    if (dto.status) user.status = dto.status;
+
+    if (dto.hubId !== undefined) {
+      user.hub = dto.hubId ? ({ id: dto.hubId } as any) : null;
+    }
+
+    const savedUser = await this.usersRepository.save(user);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password_hash, refresh_token, ...result } = savedUser;
+    return result as User;
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng!');
+    }
+    user.status = 'INACTIVE';
+    await this.usersRepository.save(user);
+  }
 }

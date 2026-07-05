@@ -6,6 +6,8 @@ import {
   Request,
   Get,
   Patch,
+  Param,
+  Delete,
 } from '@nestjs/common';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -52,5 +54,38 @@ export class UsersController {
     @Body() updateProfileDto: UpdateProfileDto,
   ) {
     return this.usersService.updateProfile(req.user.userId, updateProfileDto);
+  }
+
+  @Get()
+  @Roles(Role.ADMIN)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async getAllUsers() {
+    return await this.usersService.findAllUsers();
+  }
+
+  @Patch(':id')
+  @Roles(Role.ADMIN)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async adminUpdateUser(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      fullName?: string;
+      phone_number?: string;
+      address?: string;
+      role?: Role;
+      hubId?: string;
+      status?: string;
+    },
+  ) {
+    return await this.usersService.adminUpdateUser(id, body);
+  }
+
+  @Delete(':id')
+  @Roles(Role.ADMIN)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async deleteUser(@Param('id') id: string) {
+    await this.usersService.deleteUser(id);
+    return { message: 'Đã ngừng kích hoạt tài khoản nhân viên thành công!' };
   }
 }

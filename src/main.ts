@@ -22,7 +22,9 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(3000);
+  app.enableCors();
+
+  await app.listen(3333);
 }
 bootstrap().catch((err) => {
   console.error('Lỗi khi khởi động ứng dụng:', err);
