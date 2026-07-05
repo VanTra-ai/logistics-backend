@@ -112,7 +112,7 @@ export class OrdersController {
   }
 
   @Patch(':id/assign')
-  @Roles('ADMIN') // Tương lai có thể thêm 'HUB_COORDINATOR'
+  @Roles('ADMIN', 'HUB_COORDINATOR') // Tương lai có thể thêm 'HUB_COORDINATOR'
   @UseGuards(RolesGuard)
   async assignShipper(
     @Param('id') id: string,
@@ -129,7 +129,7 @@ export class OrdersController {
   }
 
   @Post('scan-in')
-  @Roles('ADMIN') // Tương lai bạn có thể cấp thêm quyền cho HUB_COORDINATOR
+  @Roles('ADMIN', 'HUB_COORDINATOR') // Tương lai bạn có thể cấp thêm quyền cho HUB_COORDINATOR
   @UseGuards(RolesGuard)
   async scanIn(
     @Body() scanInDto: ScanInDto,
@@ -151,7 +151,7 @@ export class OrdersController {
   }
 
   @Post('scan-out')
-  @Roles('ADMIN') // Tương lai có thể mở rộng cho HUB_COORDINATOR
+  @Roles('ADMIN', 'HUB_COORDINATOR') // Tương lai có thể mở rộng cho HUB_COORDINATOR
   @UseGuards(RolesGuard)
   async scanOut(
     @Body() scanOutDto: ScanOutDto,
@@ -215,7 +215,7 @@ export class OrdersController {
   }
 
   @Patch(':id/retry')
-  @Roles('ADMIN') // API dành cho bộ phận vận hành bưu cục
+  @Roles('ADMIN', 'HUB_COORDINATOR') // API dành cho bộ phận vận hành bưu cục
   @UseGuards(RolesGuard)
   async retryDelivery(
     @Param('id') id: string,
@@ -237,7 +237,7 @@ export class OrdersController {
   }
 
   @Patch(':id/rts')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(RolesGuard)
   async returnToSender(
     @Param('id') id: string,
@@ -259,7 +259,7 @@ export class OrdersController {
   }
 
   @Post('remit')
-  @Roles('ADMIN') // Chỉ Kế toán hoặc Quản lý bưu cục mới được quyền thu tiền
+  @Roles('ADMIN', 'HUB_COORDINATOR') // Chỉ Kế toán hoặc Quản lý bưu cục mới được quyền thu tiền
   @UseGuards(RolesGuard)
   async remitCOD(
     @Body() remitOrdersDto: RemitOrdersDto,

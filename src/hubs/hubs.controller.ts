@@ -57,7 +57,7 @@ export class HubsController {
   }
 
   @Get(':id/shipments')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async getHubShipments(@Param('id') id: string) {
     const shipments = await this.hubsService.getHubShipments(id);

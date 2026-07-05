@@ -22,7 +22,7 @@ export class ShipmentsController {
   constructor(private readonly shipmentsService: ShipmentsService) {}
 
   @Post()
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async createShipment(@Body() createShipmentDto: CreateShipmentDto) {
     const shipment =
@@ -34,7 +34,7 @@ export class ShipmentsController {
   }
 
   @Patch(':id/orders')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async assignOrdersToShipment(
     @Param('id') id: string,
@@ -48,7 +48,7 @@ export class ShipmentsController {
   }
 
   @Patch(':id/status')
-  @Roles('ADMIN', 'SHIPPER')
+  @Roles('ADMIN', 'SHIPPER', 'HUB_COORDINATOR')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async updateShipmentStatus(
     @Param('id') id: string,
@@ -62,7 +62,7 @@ export class ShipmentsController {
   }
 
   @Delete(':id/orders/:orderId')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async removeOrderFromShipment(
     @Param('id') id: string,
