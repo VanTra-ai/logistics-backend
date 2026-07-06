@@ -46,6 +46,18 @@ export class Order {
   @Column('decimal', { precision: 12, scale: 2 })
   cod_amount!: number; // Tiền thu hộ (COD)
 
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  length!: number;
+
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  width!: number;
+
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  height!: number;
+
+  @Column('decimal', { precision: 12, scale: 2, default: 0 })
+  cod_fee!: number;
+
   @Column('text', { nullable: true })
   note!: string; // Chú thích của khách hàng
 

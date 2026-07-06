@@ -9,6 +9,9 @@ import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
 import { TrackingsService } from '../trackings/trackings.service';
 import { User } from '../users/user.entity';
+import { Wallet } from '../wallets/wallet.entity';
+import { Transaction } from '../wallets/transaction.entity';
+import { FinanceService } from '../finance/finance.service';
 import {
   IsNotEmpty,
   IsString,
@@ -56,6 +59,18 @@ export class CreateOrderDto {
   @IsNotEmpty()
   cod_amount!: number;
 
+  @IsNumber()
+  @IsOptional()
+  length?: number;
+
+  @IsNumber()
+  @IsOptional()
+  width?: number;
+
+  @IsNumber()
+  @IsOptional()
+  height?: number;
+
   @IsString()
   @IsOptional()
   note?: string;
@@ -101,6 +116,18 @@ export class UpdateOrderDto {
   @IsNumber()
   @IsOptional()
   cod_amount?: number;
+
+  @IsNumber()
+  @IsOptional()
+  length?: number;
+
+  @IsNumber()
+  @IsOptional()
+  width?: number;
+
+  @IsNumber()
+  @IsOptional()
+  height?: number;
 
   @IsString()
   @IsOptional()
@@ -225,8 +252,13 @@ export class OrdersService {
     private ordersRepository: Repository<Order>,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @InjectRepository(Wallet)
+    private walletsRepository: Repository<Wallet>,
+    @InjectRepository(Transaction)
+    private transactionsRepository: Repository<Transaction>,
     private hubsService: HubsService,
     private trackingsService: TrackingsService,
+    private financeService: FinanceService,
   ) {}
 
   private generateTrackingNumber(): string {
@@ -247,6 +279,34 @@ export class OrdersService {
 
     const trackingNumber = this.generateTrackingNumber();
 
+    const tariff = await this.financeService.getTariff();
+
+    // 1. Quy đổi thể tích cồng kềnh
+    const length = data.length || 0;
+    const width = data.width || 0;
+    const height = data.height || 0;
+    const bulkWeight = (length * width * height) / 5000;
+    const chargeableWeight = Math.max(data.weight, bulkWeight);
+
+    // 2. Tính phí vận chuyển (Ước lượng khoảng cách 5km mặc định)
+    const distance = 5;
+    const extraDistance = Math.max(
+      0,
+      distance - Number(tariff.base_distance_limit),
+    );
+    const baseShippingPrice =
+      Number(tariff.base_price_distance) +
+      extraDistance * Number(tariff.block_price_distance);
+    // Mỗi kg phụ trội trên 2kg cộng 5,000đ
+    const shippingFee =
+      baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
+
+    // 3. Tính phí COD
+    const codFee =
+      data.cod_amount > 0
+        ? (data.cod_amount * Number(tariff.cod_fee_percent)) / 100
+        : 0;
+
     const newOrder = this.ordersRepository.create({
       tracking_number: trackingNumber,
       current_status: 'PENDING',
@@ -257,7 +317,12 @@ export class OrdersService {
       receiver_phone: data.receiver_phone,
       receiver_address: data.receiver_address,
       weight: data.weight,
+      length,
+      width,
+      height,
       cod_amount: data.cod_amount,
+      cod_fee: codFee,
+      shipping_fee: shippingFee,
       note: data.note,
       pickup_hub: hub,
       customer: { id: userId },
@@ -640,6 +705,105 @@ export class OrdersService {
 
     const savedOrder = await this.ordersRepository.save(order);
 
+    // Cập nhật ví và giao dịch cho tài xế & bưu cục
+    try {
+      const tariff = await this.financeService.getTariff();
+
+      // 1. Cộng chiết khấu cho Tài xế (Shipper Payout)
+      let shipperWallet = await this.walletsRepository.findOne({
+        where: { user: { id: shipperId } },
+      });
+      if (!shipperWallet) {
+        const user = await this.usersRepository.findOne({
+          where: { id: shipperId },
+        });
+        if (!user)
+          throw new NotFoundException('Không tìm thấy tài xế để tạo ví!');
+        shipperWallet = this.walletsRepository.create({
+          user,
+          balance: 0,
+          hold_balance: 0,
+        });
+        await this.walletsRepository.save(shipperWallet);
+      }
+
+      const shipperPayout =
+        Number(tariff.shipper_payout_flat) +
+        (Number(savedOrder.shipping_fee) *
+          Number(tariff.shipper_payout_percent)) /
+          100;
+
+      shipperWallet.balance = Number(shipperWallet.balance) + shipperPayout;
+
+      if (savedOrder.cod_amount > 0) {
+        shipperWallet.hold_balance =
+          Number(shipperWallet.hold_balance) + Number(savedOrder.cod_amount);
+      }
+      await this.walletsRepository.save(shipperWallet);
+
+      // Lưu nhật ký giao dịch tài xế
+      const payoutTx = this.transactionsRepository.create({
+        wallet: shipperWallet,
+        order: savedOrder,
+        amount: shipperPayout,
+        type: 'INCOME',
+        description: `Chiết khấu giao hàng thành công đơn ${savedOrder.tracking_number}`,
+      });
+      await this.transactionsRepository.save(payoutTx);
+
+      if (savedOrder.cod_amount > 0) {
+        const codLiabilityTx = this.transactionsRepository.create({
+          wallet: shipperWallet,
+          order: savedOrder,
+          amount: -Number(savedOrder.cod_amount),
+          type: 'DEBT',
+          description: `Công nợ thu hộ COD đơn ${savedOrder.tracking_number} (Tạm giữ)`,
+        });
+        await this.transactionsRepository.save(codLiabilityTx);
+      }
+
+      // 2. Cộng hoa hồng nhượng quyền cho Bưu cục Đối tác
+      if (savedOrder.pickup_hub) {
+        const hubCoordinator = await this.usersRepository.findOne({
+          where: {
+            hub: { id: savedOrder.pickup_hub.id },
+            role: 'HUB_COORDINATOR',
+          },
+        });
+        if (hubCoordinator) {
+          let hubWallet = await this.walletsRepository.findOne({
+            where: { user: { id: hubCoordinator.id } },
+          });
+          if (!hubWallet) {
+            hubWallet = this.walletsRepository.create({
+              user: hubCoordinator,
+              balance: 0,
+              hold_balance: 0,
+            });
+            await this.walletsRepository.save(hubWallet);
+          }
+
+          const hubCommission =
+            (Number(savedOrder.shipping_fee) *
+              Number(tariff.hub_commission_percent)) /
+            100;
+          hubWallet.balance = Number(hubWallet.balance) + hubCommission;
+          await this.walletsRepository.save(hubWallet);
+
+          const hubTx = this.transactionsRepository.create({
+            wallet: hubWallet,
+            order: savedOrder,
+            amount: hubCommission,
+            type: 'INCOME',
+            description: `Hoa hồng chia sẻ nhượng quyền bưu cục đơn ${savedOrder.tracking_number}`,
+          });
+          await this.transactionsRepository.save(hubTx);
+        }
+      }
+    } catch (err) {
+      console.warn('Lỗi ghi nhận dòng tiền vào ví:', err);
+    }
+
     // Ghi log hành trình chốt hạ (kèm tọa độ GPS cuối cùng)
     await this.trackingsService.addTrackingRecord({
       order: savedOrder,
@@ -807,6 +971,30 @@ export class OrdersService {
     for (const order of validOrders) {
       order.cod_status = 'REMITTED';
       totalAmount += Number(order.cod_amount);
+
+      // Khấu trừ công nợ COD của shipper
+      if (order.shipper) {
+        const shipperWallet = await this.walletsRepository.findOne({
+          where: { user: { id: order.shipper.id } },
+        });
+        if (shipperWallet) {
+          shipperWallet.hold_balance = Math.max(
+            0,
+            Number(shipperWallet.hold_balance) - Number(order.cod_amount),
+          );
+          await this.walletsRepository.save(shipperWallet);
+
+          // Tạo bản ghi giao dịch đối soát giảm nợ
+          const clearLiabilityTx = this.transactionsRepository.create({
+            wallet: shipperWallet,
+            order: order,
+            amount: Number(order.cod_amount),
+            type: 'REMIT',
+            description: `Đối soát nộp quỹ COD thành công đơn ${order.tracking_number} cho bưu cục`,
+          });
+          await this.transactionsRepository.save(clearLiabilityTx);
+        }
+      }
     }
 
     await this.ordersRepository.save(validOrders);
@@ -864,7 +1052,34 @@ export class OrdersService {
       order.receiver_address = data.receiver_address;
     if (data.weight !== undefined) order.weight = data.weight;
     if (data.cod_amount !== undefined) order.cod_amount = data.cod_amount;
+    if (data.length !== undefined) order.length = data.length;
+    if (data.width !== undefined) order.width = data.width;
+    if (data.height !== undefined) order.height = data.height;
     if (data.note !== undefined) order.note = data.note!;
+
+    // Recalculate fees
+    const tariff = await this.financeService.getTariff();
+    const length = order.length || 0;
+    const width = order.width || 0;
+    const height = order.height || 0;
+    const bulkWeight = (length * width * height) / 5000;
+    const chargeableWeight = Math.max(order.weight, bulkWeight);
+
+    const distance = 5;
+    const extraDistance = Math.max(
+      0,
+      distance - Number(tariff.base_distance_limit),
+    );
+    const baseShippingPrice =
+      Number(tariff.base_price_distance) +
+      extraDistance * Number(tariff.block_price_distance);
+    order.shipping_fee =
+      baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
+
+    order.cod_fee =
+      order.cod_amount > 0
+        ? (order.cod_amount * Number(tariff.cod_fee_percent)) / 100
+        : 0;
 
     return await this.ordersRepository.save(order);
   }

@@ -19,6 +19,20 @@ export class UsersService {
     private usersRepository: Repository<User>,
   ) {}
 
+  private async generateEmployeeCode(role: string): Promise<string> {
+    let prefix = 'NV';
+    if (role === 'SHIPPER') prefix = 'TX';
+    else if (role === 'CUSTOMER') prefix = 'KH';
+
+    const count = await this.usersRepository.count({
+      where: { role: role as any },
+    });
+
+    const year = new Date().getFullYear().toString().substring(2);
+    const sequence = (count + 1).toString().padStart(4, '0');
+    return `${prefix}${year}${sequence}`;
+  }
+
   async createUser(userData: RegisterUserDto): Promise<User> {
     const existingUser = await this.usersRepository.findOne({
       where: [
@@ -38,8 +52,13 @@ export class UsersService {
 
     const hashedPassword = await bcrypt.hash(userData.password_hash, 10);
 
+    const employeeCode = await this.generateEmployeeCode(
+      userData.role || 'CUSTOMER',
+    );
+
     const newUser = this.usersRepository.create({
       ...userData,
+      employee_code: employeeCode,
       password_hash: hashedPassword,
       role: userData.role || Role.CUSTOMER,
     });
@@ -73,9 +92,12 @@ export class UsersService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+    const employeeCode = await this.generateEmployeeCode(dto.role);
+
     const newUser = this.usersRepository.create({
       email: dto.email,
       phone_number: dto.phone_number,
+      employee_code: employeeCode,
       password_hash: hashedPassword,
       full_name: dto.fullName,
       role: dto.role,

@@ -76,6 +76,18 @@ export class ShipmentsService {
     private dataSource: DataSource,
   ) {}
 
+  private async generateShipmentCode(): Promise<string> {
+    const today = new Date();
+    const dateStr =
+      today.getFullYear().toString().substring(2) +
+      (today.getMonth() + 1).toString().padStart(2, '0') +
+      today.getDate().toString().padStart(2, '0');
+
+    const count = await this.shipmentsRepository.count();
+    const sequence = (count + 1).toString().padStart(4, '0');
+    return `CX${dateStr}-${sequence}`;
+  }
+
   async createShipment(data: CreateShipmentDto): Promise<Shipment> {
     const shipper = await this.usersRepository.findOne({
       where: { id: data.shipper_id },
@@ -102,7 +114,10 @@ export class ShipmentsService {
       destinationHub = foundHub;
     }
 
+    const shipmentCode = await this.generateShipmentCode();
+
     const newShipment = this.shipmentsRepository.create({
+      shipment_code: shipmentCode,
       shipper,
       origin_hub: originHub,
       destination_hub: destinationHub,
