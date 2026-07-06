@@ -32,6 +32,20 @@ export class UpdateShipmentStatusDto {
   status!: string;
 }
 
+export class UpdateShipmentDto {
+  @IsString()
+  @IsOptional()
+  shipper_id?: string;
+
+  @IsOptional()
+  @IsString()
+  destination_hub_id?: string;
+
+  @IsOptional()
+  @IsString()
+  vehicle_number?: string;
+}
+
 export class CreateShipmentDto {
   @IsString()
   @IsNotEmpty({ message: 'Bắt buộc phải chọn tài xế (shipper_id)!' })
@@ -249,5 +263,82 @@ export class ShipmentsService {
       message: `Đã gỡ đơn hàng ${order.id} khỏi chuyến xe an toàn!`,
       shipment_id: shipmentId,
     };
+  }
+
+  async updateShipment(id: string, data: UpdateShipmentDto): Promise<Shipment> {
+    const shipment = await this.shipmentsRepository.findOne({
+      where: { id },
+      relations: { shipper: true, destination_hub: true },
+    });
+    if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
+
+    if (shipment.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Chỉ có thể sửa chuyến xe chưa lăn bánh (PENDING)!',
+      );
+    }
+
+    if (data.shipper_id) {
+      const shipper = await this.usersRepository.findOne({
+        where: { id: data.shipper_id },
+      });
+      if (!shipper || shipper.role !== 'SHIPPER') {
+        throw new NotFoundException('Không tìm thấy tài xế hợp lệ!');
+      }
+      shipment.shipper = shipper;
+    }
+
+    if (data.vehicle_number !== undefined) {
+      shipment.vehicle_number = data.vehicle_number.toUpperCase();
+    }
+
+    if (data.destination_hub_id !== undefined) {
+      if (data.destination_hub_id === '' || data.destination_hub_id === null) {
+        shipment.destination_hub = null as any;
+      } else {
+        const foundHub = await this.hubsRepository.findOne({
+          where: { id: data.destination_hub_id },
+        });
+        if (!foundHub) throw new NotFoundException('Không tìm thấy trạm đích!');
+        shipment.destination_hub = foundHub;
+      }
+    }
+
+    return await this.shipmentsRepository.save(shipment);
+  }
+
+  async deleteShipment(id: string) {
+    const shipment = await this.shipmentsRepository.findOne({
+      where: { id },
+      relations: { orders: true },
+    });
+    if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
+
+    if (shipment.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Chỉ có thể xóa chuyến xe chưa lăn bánh (PENDING)!',
+      );
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      if (shipment.orders && shipment.orders.length > 0) {
+        for (const order of shipment.orders) {
+          order.shipment = null as any;
+          await queryRunner.manager.save(order);
+        }
+      }
+      await queryRunner.manager.remove(shipment);
+      await queryRunner.commitTransaction();
+      return { message: 'Xóa chuyến xe thành công!' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }

@@ -69,6 +69,48 @@ export class CreateOrderDto {
   shipper_id?: string;
 }
 
+export class UpdateOrderDto {
+  @IsString()
+  @IsOptional()
+  sender_name?: string;
+
+  @IsString()
+  @IsOptional()
+  sender_phone?: string;
+
+  @IsString()
+  @IsOptional()
+  sender_address?: string;
+
+  @IsString()
+  @IsOptional()
+  receiver_name?: string;
+
+  @IsString()
+  @IsOptional()
+  receiver_phone?: string;
+
+  @IsString()
+  @IsOptional()
+  receiver_address?: string;
+
+  @IsNumber()
+  @IsOptional()
+  weight?: number;
+
+  @IsNumber()
+  @IsOptional()
+  cod_amount?: number;
+
+  @IsString()
+  @IsOptional()
+  note?: string;
+
+  @IsString()
+  @IsOptional()
+  pickup_hub_id?: string;
+}
+
 export class UpdateOrderStatusDto {
   @IsString()
   @IsNotEmpty()
@@ -785,5 +827,63 @@ export class OrdersService {
       total_money_collected: totalAmount, // Tổng số tiền Admin đã thu vào két
       failed_orders: orderIds.length - validOrders.length,
     };
+  }
+
+  async updateOrder(id: string, data: UpdateOrderDto): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id },
+      relations: { pickup_hub: true },
+    });
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    // Chỉ có thể sửa đơn hàng ở trạng thái PENDING hoặc AT_HUB
+    if (
+      order.current_status !== 'PENDING' &&
+      order.current_status !== 'AT_HUB'
+    ) {
+      throw new BadRequestException(
+        'Chỉ có thể chỉnh sửa đơn hàng đang chờ hoặc đang lưu kho!',
+      );
+    }
+
+    if (data.pickup_hub_id) {
+      const hub = await this.hubsService.findById(data.pickup_hub_id);
+      if (!hub) throw new NotFoundException('Không tìm thấy bưu cục!');
+      order.pickup_hub = hub;
+    }
+
+    if (data.sender_name !== undefined) order.sender_name = data.sender_name;
+    if (data.sender_phone !== undefined) order.sender_phone = data.sender_phone;
+    if (data.sender_address !== undefined)
+      order.sender_address = data.sender_address;
+    if (data.receiver_name !== undefined)
+      order.receiver_name = data.receiver_name;
+    if (data.receiver_phone !== undefined)
+      order.receiver_phone = data.receiver_phone;
+    if (data.receiver_address !== undefined)
+      order.receiver_address = data.receiver_address;
+    if (data.weight !== undefined) order.weight = data.weight;
+    if (data.cod_amount !== undefined) order.cod_amount = data.cod_amount;
+    if (data.note !== undefined) order.note = data.note!;
+
+    return await this.ordersRepository.save(order);
+  }
+
+  async deleteOrder(id: string) {
+    const order = await this.ordersRepository.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+
+    // Chỉ cho phép xóa đơn hàng chưa bàn giao cho shipper / chưa đi xe
+    if (
+      order.current_status !== 'PENDING' &&
+      order.current_status !== 'AT_HUB'
+    ) {
+      throw new BadRequestException(
+        'Chỉ có thể xóa đơn hàng ở trạng thái đang chờ hoặc đang lưu kho!',
+      );
+    }
+
+    await this.ordersRepository.softRemove(order);
+    return { message: 'Xóa đơn hàng thành công!' };
   }
 }

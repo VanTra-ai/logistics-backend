@@ -12,6 +12,7 @@ import {
   CreateShipmentDto,
   AssignOrdersDto,
   UpdateShipmentStatusDto,
+  UpdateShipmentDto,
 } from './shipments.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -73,5 +74,29 @@ export class ShipmentsController {
       orderId,
     );
     return result;
+  }
+
+  @Patch(':id')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async updateShipment(
+    @Param('id') id: string,
+    @Body() updateShipmentDto: UpdateShipmentDto,
+  ) {
+    const result = await this.shipmentsService.updateShipment(
+      id,
+      updateShipmentDto,
+    );
+    return {
+      message: 'Cập nhật thông tin chuyến xe thành công!',
+      data: result,
+    };
+  }
+
+  @Delete(':id')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async deleteShipment(@Param('id') id: string) {
+    return await this.shipmentsService.deleteShipment(id);
   }
 }

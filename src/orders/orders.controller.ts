@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Param,
   Body,
   UseGuards,
@@ -20,6 +21,7 @@ import {
   RetryOrderDto,
   RtsOrderDto,
   RemitOrdersDto,
+  UpdateOrderDto,
 } from './orders.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -275,5 +277,24 @@ export class OrdersController {
       message: 'Nộp tiền COD về bưu cục thành công!',
       data: result,
     };
+  }
+
+  @Patch(':id')
+  async updateOrder(
+    @Param('id') id: string,
+    @Body() updateOrderDto: UpdateOrderDto,
+  ) {
+    const order = await this.ordersService.updateOrder(id, updateOrderDto);
+    return {
+      message: 'Cập nhật đơn hàng thành công!',
+      data: order,
+    };
+  }
+
+  @Delete(':id')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(RolesGuard)
+  async deleteOrder(@Param('id') id: string) {
+    return await this.ordersService.deleteOrder(id);
   }
 }
