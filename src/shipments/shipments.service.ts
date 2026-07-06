@@ -5,6 +5,7 @@ import {
   IsArray,
   ArrayNotEmpty,
   IsIn,
+  IsNumber,
 } from 'class-validator';
 import {
   Injectable,
@@ -17,6 +18,7 @@ import { Shipment } from './shipment.entity';
 import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { Order } from '../orders/order.entity';
+import { TrackingsService } from '../trackings/trackings.service';
 
 export class AssignOrdersDto {
   @IsArray()
@@ -44,6 +46,10 @@ export class UpdateShipmentDto {
   @IsOptional()
   @IsString()
   vehicle_number?: string;
+
+  @IsOptional()
+  @IsNumber()
+  capacity_weight?: number;
 }
 
 export class CreateShipmentDto {
@@ -62,6 +68,10 @@ export class CreateShipmentDto {
   @IsOptional()
   @IsString()
   vehicle_number?: string;
+
+  @IsOptional()
+  @IsNumber()
+  capacity_weight?: number;
 }
 
 @Injectable()
@@ -74,6 +84,7 @@ export class ShipmentsService {
     @InjectRepository(Hub)
     private hubsRepository: Repository<Hub>,
     private dataSource: DataSource,
+    private trackingsService: TrackingsService,
   ) {}
 
   private async generateShipmentCode(): Promise<string> {
@@ -94,6 +105,31 @@ export class ShipmentsService {
     });
     if (!shipper || shipper.role !== 'SHIPPER') {
       throw new NotFoundException('Không tìm thấy tài xế hợp lệ!');
+    }
+
+    // Kiểm tra xem Shipper có đang bận ở chuyến xe nào có status là IN_TRANSIT không
+    const activeShipment = await this.shipmentsRepository.findOne({
+      where: { shipper: { id: data.shipper_id }, status: 'IN_TRANSIT' },
+    });
+    if (activeShipment) {
+      throw new BadRequestException(
+        `Tài xế ${shipper.full_name} đang bận thực hiện chuyến xe ${activeShipment.shipment_code || activeShipment.id} chưa kết thúc!`,
+      );
+    }
+
+    // Kiểm tra xem Biển kiểm soát xe có đang bận di chuyển không
+    if (data.vehicle_number) {
+      const activeVehicle = await this.shipmentsRepository.findOne({
+        where: {
+          vehicle_number: data.vehicle_number.toUpperCase(),
+          status: 'IN_TRANSIT',
+        },
+      });
+      if (activeVehicle) {
+        throw new BadRequestException(
+          `Phương tiện mang biển kiểm soát ${data.vehicle_number.toUpperCase()} đang di chuyển trong chuyến xe ${activeVehicle.shipment_code || activeVehicle.id}!`,
+        );
+      }
     }
 
     const originHub = await this.hubsRepository.findOne({
@@ -122,16 +158,20 @@ export class ShipmentsService {
       origin_hub: originHub,
       destination_hub: destinationHub,
       vehicle_number: data.vehicle_number,
+      capacity_weight:
+        data.capacity_weight !== undefined
+          ? Number(data.capacity_weight)
+          : 1000,
       status: 'PENDING',
     });
 
     return await this.shipmentsRepository.save(newShipment);
   }
 
-  // Thêm đơn hàng vào chuyến xe (Quét mã)
   async assignOrdersToShipment(shipmentId: string, data: AssignOrdersDto) {
     const shipment = await this.shipmentsRepository.findOne({
       where: { id: shipmentId },
+      relations: { orders: true },
     });
     if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
 
@@ -158,11 +198,28 @@ export class ShipmentsService {
         );
       }
 
+      // Kiểm soát tải trọng của xe
+      const currentWeight = (shipment.orders || []).reduce(
+        (sum, o) => sum + Number(o.weight || 0),
+        0,
+      );
+      const incomingWeight = orders.reduce(
+        (sum, o) => sum + Number(o.weight || 0),
+        0,
+      );
+      const limitWeight = Number(shipment.capacity_weight || 1000);
+
+      if (currentWeight + incomingWeight > limitWeight) {
+        throw new BadRequestException(
+          `Vượt quá tải trọng tối đa của xe (Tổng hàng: ${(currentWeight + incomingWeight).toFixed(2)}kg > Tải trọng: ${limitWeight}kg)!`,
+        );
+      }
+
       // Kiểm tra và gán chuyến xe
       for (const order of orders) {
         if (order.current_status !== 'AT_HUB') {
           throw new BadRequestException(
-            `Đơn hàng ${order.id} không ở trạng thái lưu kho (AT_HUB)!`,
+            `Đơn hàng ${order.tracking_number || order.id} không ở trạng thái lưu kho (AT_HUB)!`,
           );
         }
         order.shipment = shipment; // Liên kết đơn hàng vào chuyến xe
@@ -170,6 +227,15 @@ export class ShipmentsService {
 
       // Lưu toàn bộ đơn hàng bằng Transaction
       await queryRunner.manager.save(orders);
+
+      // Thêm mốc lịch sử hành trình cho từng đơn hàng
+      for (const order of orders) {
+        await this.trackingsService.addTrackingRecord({
+          order,
+          status: 'AT_HUB',
+          note: `Đơn hàng đã được xếp vào chuyến xe ${shipment.shipment_code || shipment.id} chuẩn bị lăn bánh.`,
+        });
+      }
 
       await queryRunner.commitTransaction(); // Xác nhận thành công
 
@@ -192,7 +258,7 @@ export class ShipmentsService {
   ) {
     const shipment = await this.shipmentsRepository.findOne({
       where: { id: shipmentId },
-      relations: { orders: true, destination_hub: true }, // Nạp kèm danh sách đơn hàng
+      relations: { orders: true, destination_hub: true, origin_hub: true }, // Nạp kèm danh sách đơn hàng
     });
 
     if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
@@ -208,18 +274,50 @@ export class ShipmentsService {
       // Nếu xe chạy (IN_TRANSIT) -> Chuyển trạng thái các đơn hàng thành "Đang luân chuyển"
       if (data.status === 'IN_TRANSIT') {
         for (const order of shipment.orders) {
+          // Bỏ qua các đơn hàng đã hủy / chuyển hoàn để tránh lỗi hồi sinh đơn
+          if (
+            order.current_status === 'CANCELLED' ||
+            order.current_status === 'RETURNED_TO_SENDER'
+          ) {
+            continue;
+          }
+
           // Nếu có bưu cục đích -> Luân chuyển kho. Nếu không -> Đi giao trực tiếp cho khách.
           order.current_status = shipment.destination_hub
             ? 'IN_TRANSIT'
             : 'DELIVERING';
+
+          // Ghi nhận mốc luân chuyển hành trình
+          await this.trackingsService.addTrackingRecord({
+            order,
+            status: order.current_status,
+            note: shipment.destination_hub
+              ? `Chuyến xe luân chuyển ${shipment.shipment_code} đã khởi hành từ ${shipment.origin_hub?.name || 'bưu cục gửi'} đi bưu cục ${shipment.destination_hub.name}.`
+              : `Chuyến xe giao hàng trực tiếp ${shipment.shipment_code} đã lăn bánh đi giao tới người nhận.`,
+          });
         }
       }
       // Nếu xe đến nơi (COMPLETED) -> Hạ tải, hàng nhập kho bưu cục đích
       else if (data.status === 'COMPLETED') {
         for (const order of shipment.orders) {
+          // Bỏ qua các đơn hàng đã hủy / chuyển hoàn để tránh lỗi hồi sinh đơn
+          if (
+            order.current_status === 'CANCELLED' ||
+            order.current_status === 'RETURNED_TO_SENDER'
+          ) {
+            continue;
+          }
+
           order.current_status = 'AT_HUB';
           // Gỡ bỏ liên kết chuyến xe vì hàng đã xuống bãi
           order.shipment = null as any;
+
+          // Ghi nhận mốc hạ tải hành trình
+          await this.trackingsService.addTrackingRecord({
+            order,
+            status: 'AT_HUB',
+            note: `Chuyến xe luân chuyển ${shipment.shipment_code} đã hoàn thành cập bến. Đơn hàng đã hạ tải nhập kho bưu cục ${shipment.destination_hub?.name || 'đích'}.`,
+          });
         }
       }
 
@@ -274,6 +372,13 @@ export class ShipmentsService {
     order.shipment = null as any;
     await this.dataSource.manager.save(order);
 
+    // Ghi nhận mốc hành trình giải phóng đơn hàng
+    await this.trackingsService.addTrackingRecord({
+      order,
+      status: 'AT_HUB',
+      note: `Đơn hàng được gỡ khỏi chuyến xe gom nhóm ${shipment.shipment_code || shipment.id} và đưa về trạng thái lưu kho bãi.`,
+    });
+
     return {
       message: `Đã gỡ đơn hàng ${order.id} khỏi chuyến xe an toàn!`,
       shipment_id: shipmentId,
@@ -300,11 +405,35 @@ export class ShipmentsService {
       if (!shipper || shipper.role !== 'SHIPPER') {
         throw new NotFoundException('Không tìm thấy tài xế hợp lệ!');
       }
+
+      const activeShipment = await this.shipmentsRepository.findOne({
+        where: { shipper: { id: data.shipper_id }, status: 'IN_TRANSIT' },
+      });
+      if (activeShipment && activeShipment.id !== id) {
+        throw new BadRequestException(
+          `Tài xế ${shipper.full_name} đang bận thực hiện chuyến xe ${activeShipment.shipment_code || activeShipment.id} chưa kết thúc!`,
+        );
+      }
       shipment.shipper = shipper;
     }
 
     if (data.vehicle_number !== undefined) {
-      shipment.vehicle_number = data.vehicle_number.toUpperCase();
+      const vNum = data.vehicle_number.toUpperCase();
+      if (vNum) {
+        const activeVehicle = await this.shipmentsRepository.findOne({
+          where: { vehicle_number: vNum, status: 'IN_TRANSIT' },
+        });
+        if (activeVehicle && activeVehicle.id !== id) {
+          throw new BadRequestException(
+            `Phương tiện mang biển kiểm soát ${vNum} đang di chuyển trong chuyến xe ${activeVehicle.shipment_code || activeVehicle.id}!`,
+          );
+        }
+      }
+      shipment.vehicle_number = vNum;
+    }
+
+    if (data.capacity_weight !== undefined) {
+      shipment.capacity_weight = Number(data.capacity_weight);
     }
 
     if (data.destination_hub_id !== undefined) {
@@ -344,6 +473,13 @@ export class ShipmentsService {
         for (const order of shipment.orders) {
           order.shipment = null as any;
           await queryRunner.manager.save(order);
+
+          // Ghi nhận mốc hành trình giải phóng đồng loạt
+          await this.trackingsService.addTrackingRecord({
+            order,
+            status: 'AT_HUB',
+            note: `Hủy gom nhóm chuyến xe ${shipment.shipment_code || shipment.id}. Đơn hàng được giải phóng quay lại kho bãi.`,
+          });
         }
       }
       await queryRunner.manager.remove(shipment);

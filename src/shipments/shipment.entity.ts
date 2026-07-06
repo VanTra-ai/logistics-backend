@@ -26,6 +26,9 @@ export class Shipment {
   @Column({ nullable: true })
   vehicle_number!: string;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 1000 })
+  capacity_weight!: number;
+
   // Bưu cục xuất phát
   @ManyToOne(() => Hub)
   origin_hub!: Hub;

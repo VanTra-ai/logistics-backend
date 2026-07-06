@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
+import { Hub } from '../hubs/hub.entity';
 import { TrackingsService } from '../trackings/trackings.service';
 import { User } from '../users/user.entity';
 import { Wallet } from '../wallets/wallet.entity';
@@ -19,6 +20,8 @@ import {
   IsNumber,
   IsArray,
   ArrayNotEmpty,
+  Min,
+  Max,
 } from 'class-validator';
 
 interface OrderStats {
@@ -53,22 +56,32 @@ export class CreateOrderDto {
 
   @IsNumber()
   @IsNotEmpty()
+  @Min(0.01, { message: 'Khối lượng phải tối thiểu 0.01 kg' })
+  @Max(5000, { message: 'Khối lượng tối đa là 5000 kg' })
   weight!: number;
 
   @IsNumber()
   @IsNotEmpty()
+  @Min(0, { message: 'Tiền thu hộ COD không được âm' })
+  @Max(500000000, { message: 'Tiền thu hộ COD tối đa là 500,000,000đ' })
   cod_amount!: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0)
+  @Max(500)
   length?: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0)
+  @Max(500)
   width?: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0)
+  @Max(500)
   height?: number;
 
   @IsString()
@@ -111,22 +124,32 @@ export class UpdateOrderDto {
 
   @IsNumber()
   @IsOptional()
+  @Min(0.01, { message: 'Khối lượng phải tối thiểu 0.01 kg' })
+  @Max(5000, { message: 'Khối lượng tối đa là 5000 kg' })
   weight?: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0, { message: 'Tiền thu hộ COD không được âm' })
+  @Max(500000000, { message: 'Tiền thu hộ COD tối đa là 500,000,000đ' })
   cod_amount?: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0)
+  @Max(500)
   length?: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0)
+  @Max(500)
   width?: number;
 
   @IsNumber()
   @IsOptional()
+  @Min(0)
+  @Max(500)
   height?: number;
 
   @IsString()
@@ -1018,87 +1041,98 @@ export class OrdersService {
   }
 
   async updateOrder(id: string, data: UpdateOrderDto): Promise<Order> {
-    const order = await this.ordersRepository.findOne({
-      where: { id },
-      relations: { pickup_hub: true },
-    });
-    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+    return await this.ordersRepository.manager.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id },
+        relations: { pickup_hub: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
-    // Chỉ có thể sửa đơn hàng ở trạng thái PENDING hoặc AT_HUB
-    if (
-      order.current_status !== 'PENDING' &&
-      order.current_status !== 'AT_HUB'
-    ) {
-      throw new BadRequestException(
-        'Chỉ có thể chỉnh sửa đơn hàng đang chờ hoặc đang lưu kho!',
+      // Chỉ có thể sửa đơn hàng ở trạng thái PENDING hoặc AT_HUB
+      if (
+        order.current_status !== 'PENDING' &&
+        order.current_status !== 'AT_HUB'
+      ) {
+        throw new BadRequestException(
+          'Chỉ có thể chỉnh sửa đơn hàng đang chờ hoặc đang lưu kho!',
+        );
+      }
+
+      if (data.pickup_hub_id) {
+        const hub = await manager.findOne(Hub, {
+          where: { id: data.pickup_hub_id },
+        });
+        if (!hub) throw new NotFoundException('Không tìm thấy bưu cục!');
+        order.pickup_hub = hub;
+      }
+
+      if (data.sender_name !== undefined) order.sender_name = data.sender_name;
+      if (data.sender_phone !== undefined)
+        order.sender_phone = data.sender_phone;
+      if (data.sender_address !== undefined)
+        order.sender_address = data.sender_address;
+      if (data.receiver_name !== undefined)
+        order.receiver_name = data.receiver_name;
+      if (data.receiver_phone !== undefined)
+        order.receiver_phone = data.receiver_phone;
+      if (data.receiver_address !== undefined)
+        order.receiver_address = data.receiver_address;
+      if (data.weight !== undefined) order.weight = data.weight;
+      if (data.cod_amount !== undefined) order.cod_amount = data.cod_amount;
+      if (data.length !== undefined) order.length = data.length;
+      if (data.width !== undefined) order.width = data.width;
+      if (data.height !== undefined) order.height = data.height;
+      if (data.note !== undefined) order.note = data.note!;
+
+      // Recalculate fees
+      const tariff = await this.financeService.getTariff();
+      const length = order.length || 0;
+      const width = order.width || 0;
+      const height = order.height || 0;
+      const bulkWeight = (length * width * height) / 5000;
+      const chargeableWeight = Math.max(order.weight, bulkWeight);
+
+      const distance = 5;
+      const extraDistance = Math.max(
+        0,
+        distance - Number(tariff.base_distance_limit),
       );
-    }
+      const baseShippingPrice =
+        Number(tariff.base_price_distance) +
+        extraDistance * Number(tariff.block_price_distance);
+      order.shipping_fee =
+        baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
 
-    if (data.pickup_hub_id) {
-      const hub = await this.hubsService.findById(data.pickup_hub_id);
-      if (!hub) throw new NotFoundException('Không tìm thấy bưu cục!');
-      order.pickup_hub = hub;
-    }
+      order.cod_fee =
+        order.cod_amount > 0
+          ? (order.cod_amount * Number(tariff.cod_fee_percent)) / 100
+          : 0;
 
-    if (data.sender_name !== undefined) order.sender_name = data.sender_name;
-    if (data.sender_phone !== undefined) order.sender_phone = data.sender_phone;
-    if (data.sender_address !== undefined)
-      order.sender_address = data.sender_address;
-    if (data.receiver_name !== undefined)
-      order.receiver_name = data.receiver_name;
-    if (data.receiver_phone !== undefined)
-      order.receiver_phone = data.receiver_phone;
-    if (data.receiver_address !== undefined)
-      order.receiver_address = data.receiver_address;
-    if (data.weight !== undefined) order.weight = data.weight;
-    if (data.cod_amount !== undefined) order.cod_amount = data.cod_amount;
-    if (data.length !== undefined) order.length = data.length;
-    if (data.width !== undefined) order.width = data.width;
-    if (data.height !== undefined) order.height = data.height;
-    if (data.note !== undefined) order.note = data.note!;
-
-    // Recalculate fees
-    const tariff = await this.financeService.getTariff();
-    const length = order.length || 0;
-    const width = order.width || 0;
-    const height = order.height || 0;
-    const bulkWeight = (length * width * height) / 5000;
-    const chargeableWeight = Math.max(order.weight, bulkWeight);
-
-    const distance = 5;
-    const extraDistance = Math.max(
-      0,
-      distance - Number(tariff.base_distance_limit),
-    );
-    const baseShippingPrice =
-      Number(tariff.base_price_distance) +
-      extraDistance * Number(tariff.block_price_distance);
-    order.shipping_fee =
-      baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
-
-    order.cod_fee =
-      order.cod_amount > 0
-        ? (order.cod_amount * Number(tariff.cod_fee_percent)) / 100
-        : 0;
-
-    return await this.ordersRepository.save(order);
+      return await manager.save(order);
+    });
   }
 
   async deleteOrder(id: string) {
-    const order = await this.ordersRepository.findOne({ where: { id } });
-    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+    return await this.ordersRepository.manager.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
-    // Chỉ cho phép xóa đơn hàng chưa bàn giao cho shipper / chưa đi xe
-    if (
-      order.current_status !== 'PENDING' &&
-      order.current_status !== 'AT_HUB'
-    ) {
-      throw new BadRequestException(
-        'Chỉ có thể xóa đơn hàng ở trạng thái đang chờ hoặc đang lưu kho!',
-      );
-    }
+      // Chỉ cho phép xóa đơn hàng chưa bàn giao cho shipper / chưa đi xe
+      if (
+        order.current_status !== 'PENDING' &&
+        order.current_status !== 'AT_HUB'
+      ) {
+        throw new BadRequestException(
+          'Chỉ có thể xóa đơn hàng ở trạng thái đang chờ hoặc đang lưu kho!',
+        );
+      }
 
-    await this.ordersRepository.softRemove(order);
-    return { message: 'Xóa đơn hàng thành công!' };
+      await manager.softRemove(order);
+      return { message: 'Xóa đơn hàng thành công!' };
+    });
   }
 }
