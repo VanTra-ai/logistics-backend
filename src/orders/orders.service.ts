@@ -375,6 +375,21 @@ export class OrdersService {
         throw new NotFoundException('Không tìm thấy đơn hàng!');
       }
 
+      if (
+        order.current_status === 'FINISHED' ||
+        order.current_status === 'CANCELLED'
+      ) {
+        throw new BadRequestException(
+          'Không thể thay đổi trạng thái của đơn hàng đã HOÀN THÀNH hoặc đã bị HỦY!',
+        );
+      }
+
+      if (data.status === 'FINISHED') {
+        throw new BadRequestException(
+          'Không thể cập nhật trực tiếp trạng thái đơn hàng sang FINISHED thông qua API này. Vui lòng sử dụng tính năng hoàn thành đơn hàng chuyên biệt để chốt tài chính!',
+        );
+      }
+
       order.current_status = data.status;
 
       if (data.status === 'FINISHED' && data.delivery_image_url) {
@@ -757,10 +772,16 @@ export class OrdersService {
     shipperId: string,
     data: CompleteOrderDto,
   ): Promise<Order> {
-    return await this.dataSource.transaction(async (manager) => {
-      const order = await manager.findOne(Order, {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Khóa dòng Order này lại để tránh các request status khác can thiệp
+      const order = await queryRunner.manager.findOne(Order, {
         where: { id: orderId },
-        relations: { shipper: true, pickup_hub: true }, // Phải gọi relation này ra để check ID
+        relations: { shipper: true, pickup_hub: true },
+        lock: { mode: 'pessimistic_write' },
       });
 
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
@@ -789,27 +810,28 @@ export class OrdersService {
         order.cod_status = 'COLLECTED';
       }
 
-      const savedOrder = await manager.save(Order, order);
+      const savedOrder = await queryRunner.manager.save(Order, order);
 
       // Cập nhật ví và giao dịch cho tài xế & bưu cục
       const tariff = await this.financeService.getTariff();
 
       // 1. Cộng chiết khấu cho Tài xế (Shipper Payout)
-      let shipperWallet = await manager.findOne(Wallet, {
+      let shipperWallet = await queryRunner.manager.findOne(Wallet, {
         where: { user: { id: shipperId } },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!shipperWallet) {
-        const user = await manager.findOne(User, {
+        const user = await queryRunner.manager.findOne(User, {
           where: { id: shipperId },
         });
         if (!user)
           throw new NotFoundException('Không tìm thấy tài xế để tạo ví!');
-        shipperWallet = manager.create(Wallet, {
+        shipperWallet = queryRunner.manager.create(Wallet, {
           user,
           balance: 0,
           hold_balance: 0,
         });
-        await manager.save(Wallet, shipperWallet);
+        await queryRunner.manager.save(Wallet, shipperWallet);
       }
 
       const shipperPayout =
@@ -824,48 +846,49 @@ export class OrdersService {
         shipperWallet.hold_balance =
           Number(shipperWallet.hold_balance) + Number(savedOrder.cod_amount);
       }
-      await manager.save(Wallet, shipperWallet);
+      await queryRunner.manager.save(Wallet, shipperWallet);
 
       // Lưu nhật ký giao dịch tài xế
-      const payoutTx = manager.create(Transaction, {
+      const payoutTx = queryRunner.manager.create(Transaction, {
         wallet: shipperWallet,
         order: savedOrder,
         amount: shipperPayout,
         type: 'INCOME',
         description: `Chiết khấu giao hàng thành công đơn ${savedOrder.tracking_number}`,
       });
-      await manager.save(Transaction, payoutTx);
+      await queryRunner.manager.save(Transaction, payoutTx);
 
       if (savedOrder.cod_amount > 0) {
-        const codLiabilityTx = manager.create(Transaction, {
+        const codLiabilityTx = queryRunner.manager.create(Transaction, {
           wallet: shipperWallet,
           order: savedOrder,
           amount: -Number(savedOrder.cod_amount),
           type: 'DEBT',
           description: `Công nợ thu hộ COD đơn ${savedOrder.tracking_number} (Tạm giữ)`,
         });
-        await manager.save(Transaction, codLiabilityTx);
+        await queryRunner.manager.save(Transaction, codLiabilityTx);
       }
 
       // 2. Cộng hoa hồng nhượng quyền cho Bưu cục Đối tác
       if (savedOrder.pickup_hub) {
-        const hubCoordinator = await manager.findOne(User, {
+        const hubCoordinator = await queryRunner.manager.findOne(User, {
           where: {
             hub: { id: savedOrder.pickup_hub.id },
             role: 'HUB_COORDINATOR',
           },
         });
         if (hubCoordinator) {
-          let hubWallet = await manager.findOne(Wallet, {
+          let hubWallet = await queryRunner.manager.findOne(Wallet, {
             where: { user: { id: hubCoordinator.id } },
+            lock: { mode: 'pessimistic_write' },
           });
           if (!hubWallet) {
-            hubWallet = manager.create(Wallet, {
+            hubWallet = queryRunner.manager.create(Wallet, {
               user: hubCoordinator,
               balance: 0,
               hold_balance: 0,
             });
-            await manager.save(Wallet, hubWallet);
+            await queryRunner.manager.save(Wallet, hubWallet);
           }
 
           const hubCommission =
@@ -873,31 +896,40 @@ export class OrdersService {
               Number(tariff.hub_commission_percent)) /
             100;
           hubWallet.balance = Number(hubWallet.balance) + hubCommission;
-          await manager.save(Wallet, hubWallet);
+          await queryRunner.manager.save(Wallet, hubWallet);
 
-          const hubTx = manager.create(Transaction, {
+          const hubTx = queryRunner.manager.create(Transaction, {
             wallet: hubWallet,
             order: savedOrder,
             amount: hubCommission,
             type: 'INCOME',
             description: `Hoa hồng chia sẻ nhượng quyền bưu cục đơn ${savedOrder.tracking_number}`,
           });
-          await manager.save(Transaction, hubTx);
+          await queryRunner.manager.save(Transaction, hubTx);
         }
       }
 
       // Ghi log hành trình chốt hạ (kèm tọa độ GPS cuối cùng)
-      await this.trackingsService.addTrackingRecordWithManager(manager, {
-        order: savedOrder,
-        status: 'FINISHED',
-        note: data.note || 'Giao hàng thành công. Khách đã nhận hàng.',
-        lat: data.lat,
-        long: data.long,
-        imageUrl: data.delivery_image_url,
-      });
+      await this.trackingsService.addTrackingRecordWithManager(
+        queryRunner.manager,
+        {
+          order: savedOrder,
+          status: 'FINISHED',
+          note: data.note || 'Giao hàng thành công. Khách đã nhận hàng.',
+          lat: data.lat,
+          long: data.long,
+          imageUrl: data.delivery_image_url,
+        },
+      );
 
+      await queryRunner.commitTransaction();
       return savedOrder;
-    });
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async returnOrder(
@@ -1022,82 +1054,97 @@ export class OrdersService {
   }
 
   async remitCOD(orderIds: string[], adminName: string) {
-    // 1. Tìm các đơn hàng
-    const orders = await this.ordersRepository.find({
-      where: { id: In(orderIds) },
-      relations: { shipper: true },
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (orders.length === 0)
-      throw new NotFoundException('Không tìm thấy đơn hàng!');
+    try {
+      // 1. Tìm các đơn hàng và khóa bi quan
+      const orders = await queryRunner.manager.find(Order, {
+        where: { id: In(orderIds) },
+        relations: { shipper: true },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    // 2. Lọc ra các đơn hàng ĐỦ ĐIỀU KIỆN nộp tiền:
-    // - Trạng thái phải là FINISHED
-    // - Phải có tiền COD > 0
-    // - cod_status phải đang là COLLECTED (chưa nộp)
-    const validOrders = orders.filter(
-      (order) =>
-        order.current_status === 'FINISHED' &&
-        order.cod_amount > 0 &&
-        order.cod_status === 'COLLECTED',
-    );
-
-    if (validOrders.length === 0) {
-      throw new BadRequestException(
-        'Các đơn hàng này không có COD hoặc đã được nộp tiền trước đó!',
-      );
-    }
-
-    let totalAmount = 0;
-
-    // 3. Chuyển trạng thái sang Đã nộp quỹ
-    for (const order of validOrders) {
-      order.cod_status = 'REMITTED';
-      totalAmount += Number(order.cod_amount);
-
-      // Khấu trừ công nợ COD của shipper
-      if (order.shipper) {
-        const shipperWallet = await this.walletsRepository.findOne({
-          where: { user: { id: order.shipper.id } },
-        });
-        if (shipperWallet) {
-          shipperWallet.hold_balance = Math.max(
-            0,
-            Number(shipperWallet.hold_balance) - Number(order.cod_amount),
-          );
-          await this.walletsRepository.save(shipperWallet);
-
-          // Tạo bản ghi giao dịch đối soát giảm nợ
-          const clearLiabilityTx = this.transactionsRepository.create({
-            wallet: shipperWallet,
-            order: order,
-            amount: Number(order.cod_amount),
-            type: 'REMIT',
-            description: `Đối soát nộp quỹ COD thành công đơn ${order.tracking_number} cho bưu cục`,
-          });
-          await this.transactionsRepository.save(clearLiabilityTx);
-        }
+      if (orders.length === 0) {
+        throw new NotFoundException('Không tìm thấy đơn hàng!');
       }
+
+      // 2. Lọc ra các đơn hàng ĐỦ ĐIỀU KIỆN nộp tiền:
+      const validOrders = orders.filter(
+        (order) =>
+          order.current_status === 'FINISHED' &&
+          order.cod_amount > 0 &&
+          order.cod_status === 'COLLECTED',
+      );
+
+      if (validOrders.length === 0) {
+        throw new BadRequestException(
+          'Các đơn hàng này không có COD hoặc đã được nộp tiền trước đó!',
+        );
+      }
+
+      let totalAmount = 0;
+
+      // 3. Chuyển trạng thái sang Đã nộp quỹ
+      for (const order of validOrders) {
+        order.cod_status = 'REMITTED';
+        totalAmount += Number(order.cod_amount);
+
+        // Khấu trừ công nợ COD của shipper
+        if (order.shipper) {
+          const shipperWallet = await queryRunner.manager.findOne(Wallet, {
+            where: { user: { id: order.shipper.id } },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (shipperWallet) {
+            shipperWallet.hold_balance = Math.max(
+              0,
+              Number(shipperWallet.hold_balance) - Number(order.cod_amount),
+            );
+            await queryRunner.manager.save(Wallet, shipperWallet);
+
+            // Tạo bản ghi giao dịch đối soát giảm nợ
+            const clearLiabilityTx = queryRunner.manager.create(Transaction, {
+              wallet: shipperWallet,
+              order: order,
+              amount: Number(order.cod_amount),
+              type: 'REMIT',
+              description: `Đối soát nộp quỹ COD thành công đơn ${order.tracking_number} cho bưu cục`,
+            });
+            await queryRunner.manager.save(Transaction, clearLiabilityTx);
+          }
+        }
+        await queryRunner.manager.save(Order, order);
+      }
+
+      // 4. Ghi log tracking đồng loạt sử dụng queryRunner.manager
+      await Promise.all(
+        validOrders.map((order) =>
+          this.trackingsService.addTrackingRecordWithManager(
+            queryRunner.manager,
+            {
+              order: order,
+              status: 'FINISHED',
+              note: `Đã đối soát tiền thu hộ (COD) thành công. Người thu: ${adminName}`,
+            },
+          ),
+        ),
+      );
+
+      await queryRunner.commitTransaction();
+
+      return {
+        total_orders_remitted: validOrders.length,
+        total_money_collected: totalAmount, // Tổng số tiền Admin đã thu vào két
+        failed_orders: orderIds.length - validOrders.length,
+      };
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
-
-    await this.ordersRepository.save(validOrders);
-
-    // 4. (Tùy chọn) Ghi log
-    await Promise.all(
-      validOrders.map((order) =>
-        this.trackingsService.addTrackingRecord({
-          order: order,
-          status: 'FINISHED',
-          note: `Đã đối soát tiền thu hộ (COD) thành công. Người thu: ${adminName}`,
-        }),
-      ),
-    );
-
-    return {
-      total_orders_remitted: validOrders.length,
-      total_money_collected: totalAmount, // Tổng số tiền Admin đã thu vào két
-      failed_orders: orderIds.length - validOrders.length,
-    };
   }
 
   async updateOrder(id: string, data: UpdateOrderDto): Promise<Order> {
