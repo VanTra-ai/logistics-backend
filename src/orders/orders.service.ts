@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, DataSource } from 'typeorm';
 import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
 import { Hub } from '../hubs/hub.entity';
@@ -282,6 +282,7 @@ export class OrdersService {
     private hubsService: HubsService,
     private trackingsService: TrackingsService,
     private financeService: FinanceService,
+    private dataSource: DataSource,
   ) {}
 
   private generateTrackingNumber(): string {
@@ -367,35 +368,37 @@ export class OrdersService {
     id: string,
     data: UpdateOrderStatusDto,
   ): Promise<Order> {
-    const order = await this.ordersRepository.findOne({ where: { id } });
+    return await this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, { where: { id } });
 
-    if (!order) {
-      throw new NotFoundException('Không tìm thấy đơn hàng!');
-    }
+      if (!order) {
+        throw new NotFoundException('Không tìm thấy đơn hàng!');
+      }
 
-    order.current_status = data.status;
+      order.current_status = data.status;
 
-    if (data.status === 'FINISHED' && data.delivery_image_url) {
-      order.delivery_image_url = data.delivery_image_url;
-    }
+      if (data.status === 'FINISHED' && data.delivery_image_url) {
+        order.delivery_image_url = data.delivery_image_url;
+      }
 
-    const updatedOrder = await this.ordersRepository.save(order);
+      const updatedOrder = await manager.save(Order, order);
 
-    const trackingNote = data.note
-      ? data.note
-      : `Trạng thái đơn hàng cập nhật thành ${data.status}`;
+      const trackingNote = data.note
+        ? data.note
+        : `Trạng thái đơn hàng cập nhật thành ${data.status}`;
 
-    // Tự động ghi lịch sử
-    await this.trackingsService.addTrackingRecord({
-      order: updatedOrder,
-      status: data.status,
-      note: trackingNote,
-      lat: data.lat,
-      long: data.long,
-      imageUrl: data.incident_image_url,
+      // Tự động ghi lịch sử
+      await this.trackingsService.addTrackingRecordWithManager(manager, {
+        order: updatedOrder,
+        status: data.status,
+        note: trackingNote,
+        lat: data.lat,
+        long: data.long,
+        imageUrl: data.incident_image_url,
+      });
+
+      return updatedOrder;
     });
-
-    return updatedOrder;
   }
 
   async findAllOrders(): Promise<Order[]> {
@@ -568,7 +571,11 @@ export class OrdersService {
     return savedOrder;
   }
 
-  async scanInOrders(trackingNumbers: string[], actorName: string) {
+  async scanInOrders(
+    trackingNumbers: string[],
+    actorName: string,
+    actorUserId?: string,
+  ) {
     if (!trackingNumbers || trackingNumbers.length === 0) {
       throw new BadRequestException('Danh sách mã vận đơn trống!');
     }
@@ -576,10 +583,37 @@ export class OrdersService {
     // 1. Tìm tất cả đơn hàng khớp với mảng mã vận đơn (Dùng toán tử In)
     const orders = await this.ordersRepository.find({
       where: { tracking_number: In(trackingNumbers) },
+      relations: { pickup_hub: true },
     });
 
     if (orders.length === 0) {
       throw new NotFoundException('Không tìm thấy đơn hàng nào hợp lệ!');
+    }
+
+    // Kiểm tra chéo bưu cục nếu là HUB_COORDINATOR
+    if (actorUserId) {
+      const user = await this.usersRepository.findOne({
+        where: { id: actorUserId },
+        relations: { hub: true },
+      });
+      if (user && user.role === 'HUB_COORDINATOR') {
+        const coordinatorHubId = user.hub?.id;
+        if (!coordinatorHubId) {
+          throw new BadRequestException(
+            'Điều phối viên chưa được gán bưu cục quản lý!',
+          );
+        }
+
+        const invalidHubOrder = orders.find(
+          (order) =>
+            !order.pickup_hub || order.pickup_hub.id !== coordinatorHubId,
+        );
+        if (invalidHubOrder) {
+          throw new BadRequestException(
+            `Đơn hàng ${invalidHubOrder.tracking_number} không thuộc quyền quản lý của bưu cục bạn!`,
+          );
+        }
+      }
     }
 
     // 2. Lọc ra những đơn hàng đủ điều kiện nhập kho
@@ -626,6 +660,7 @@ export class OrdersService {
     trackingNumbers: string[],
     shipperId: string,
     actorName: string,
+    actorUserId?: string,
   ) {
     if (!trackingNumbers || trackingNumbers.length === 0) {
       throw new BadRequestException('Danh sách mã vận đơn trống!');
@@ -644,10 +679,37 @@ export class OrdersService {
     // 2. Lấy danh sách đơn hàng từ CSDL
     const orders = await this.ordersRepository.find({
       where: { tracking_number: In(trackingNumbers) },
+      relations: { pickup_hub: true },
     });
 
     if (orders.length === 0) {
       throw new NotFoundException('Không tìm thấy mã vận đơn nào hợp lệ!');
+    }
+
+    // Kiểm tra chéo bưu cục nếu là HUB_COORDINATOR
+    if (actorUserId) {
+      const user = await this.usersRepository.findOne({
+        where: { id: actorUserId },
+        relations: { hub: true },
+      });
+      if (user && user.role === 'HUB_COORDINATOR') {
+        const coordinatorHubId = user.hub?.id;
+        if (!coordinatorHubId) {
+          throw new BadRequestException(
+            'Điều phối viên chưa được gán bưu cục quản lý!',
+          );
+        }
+
+        const invalidHubOrder = orders.find(
+          (order) =>
+            !order.pickup_hub || order.pickup_hub.id !== coordinatorHubId,
+        );
+        if (invalidHubOrder) {
+          throw new BadRequestException(
+            `Đơn hàng ${invalidHubOrder.tracking_number} không thuộc quyền quản lý của bưu cục bạn!`,
+          );
+        }
+      }
     }
 
     // 3. Lọc các đơn hàng đủ điều kiện xuất kho (Phải đang nằm ở Hub)
@@ -695,59 +757,59 @@ export class OrdersService {
     shipperId: string,
     data: CompleteOrderDto,
   ): Promise<Order> {
-    const order = await this.ordersRepository.findOne({
-      where: { id: orderId },
-      relations: { shipper: true }, // Phải gọi relation này ra để check ID
-    });
+    return await this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: orderId },
+        relations: { shipper: true, pickup_hub: true }, // Phải gọi relation này ra để check ID
+      });
 
-    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
+      if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
-    // Chốt chặn 1: Trạng thái
-    if (order.current_status !== 'DELIVERING') {
-      throw new BadRequestException(
-        'Chỉ có thể hoàn tất đơn hàng đang ở trạng thái DELIVERING!',
-      );
-    }
+      // Chốt chặn 1: Trạng thái
+      if (order.current_status !== 'DELIVERING') {
+        throw new BadRequestException(
+          'Chỉ có thể hoàn tất đơn hàng đang ở trạng thái DELIVERING!',
+        );
+      }
 
-    // Chốt chặn 2: Bảo mật phân quyền Shipper
-    if (!order.shipper || order.shipper.id !== shipperId) {
-      throw new BadRequestException(
-        'Bạn không có quyền thao tác trên đơn hàng của người khác!',
-      );
-    }
+      // Chốt chặn 2: Bảo mật phân quyền Shipper
+      if (!order.shipper || order.shipper.id !== shipperId) {
+        throw new BadRequestException(
+          'Bạn không có quyền thao tác trên đơn hàng của người khác!',
+        );
+      }
 
-    // Cập nhật dữ liệu
-    order.current_status = 'FINISHED';
-    order.delivery_image_url = data.delivery_image_url;
+      // Cập nhật dữ liệu
+      order.current_status = 'FINISHED';
+      order.delivery_image_url = data.delivery_image_url;
 
-    // Xử lý logic tiền thu hộ (COD)
-    // Chuyển trạng thái sang COLLECTED (Shipper đã cầm tiền khách, chờ nộp về bưu cục)
-    if (order.cod_amount > 0) {
-      order.cod_status = 'COLLECTED';
-    }
+      // Xử lý logic tiền thu hộ (COD)
+      // Chuyển trạng thái sang COLLECTED (Shipper đã cầm tiền khách, chờ nộp về bưu cục)
+      if (order.cod_amount > 0) {
+        order.cod_status = 'COLLECTED';
+      }
 
-    const savedOrder = await this.ordersRepository.save(order);
+      const savedOrder = await manager.save(Order, order);
 
-    // Cập nhật ví và giao dịch cho tài xế & bưu cục
-    try {
+      // Cập nhật ví và giao dịch cho tài xế & bưu cục
       const tariff = await this.financeService.getTariff();
 
       // 1. Cộng chiết khấu cho Tài xế (Shipper Payout)
-      let shipperWallet = await this.walletsRepository.findOne({
+      let shipperWallet = await manager.findOne(Wallet, {
         where: { user: { id: shipperId } },
       });
       if (!shipperWallet) {
-        const user = await this.usersRepository.findOne({
+        const user = await manager.findOne(User, {
           where: { id: shipperId },
         });
         if (!user)
           throw new NotFoundException('Không tìm thấy tài xế để tạo ví!');
-        shipperWallet = this.walletsRepository.create({
+        shipperWallet = manager.create(Wallet, {
           user,
           balance: 0,
           hold_balance: 0,
         });
-        await this.walletsRepository.save(shipperWallet);
+        await manager.save(Wallet, shipperWallet);
       }
 
       const shipperPayout =
@@ -762,48 +824,48 @@ export class OrdersService {
         shipperWallet.hold_balance =
           Number(shipperWallet.hold_balance) + Number(savedOrder.cod_amount);
       }
-      await this.walletsRepository.save(shipperWallet);
+      await manager.save(Wallet, shipperWallet);
 
       // Lưu nhật ký giao dịch tài xế
-      const payoutTx = this.transactionsRepository.create({
+      const payoutTx = manager.create(Transaction, {
         wallet: shipperWallet,
         order: savedOrder,
         amount: shipperPayout,
         type: 'INCOME',
         description: `Chiết khấu giao hàng thành công đơn ${savedOrder.tracking_number}`,
       });
-      await this.transactionsRepository.save(payoutTx);
+      await manager.save(Transaction, payoutTx);
 
       if (savedOrder.cod_amount > 0) {
-        const codLiabilityTx = this.transactionsRepository.create({
+        const codLiabilityTx = manager.create(Transaction, {
           wallet: shipperWallet,
           order: savedOrder,
           amount: -Number(savedOrder.cod_amount),
           type: 'DEBT',
           description: `Công nợ thu hộ COD đơn ${savedOrder.tracking_number} (Tạm giữ)`,
         });
-        await this.transactionsRepository.save(codLiabilityTx);
+        await manager.save(Transaction, codLiabilityTx);
       }
 
       // 2. Cộng hoa hồng nhượng quyền cho Bưu cục Đối tác
       if (savedOrder.pickup_hub) {
-        const hubCoordinator = await this.usersRepository.findOne({
+        const hubCoordinator = await manager.findOne(User, {
           where: {
             hub: { id: savedOrder.pickup_hub.id },
             role: 'HUB_COORDINATOR',
           },
         });
         if (hubCoordinator) {
-          let hubWallet = await this.walletsRepository.findOne({
+          let hubWallet = await manager.findOne(Wallet, {
             where: { user: { id: hubCoordinator.id } },
           });
           if (!hubWallet) {
-            hubWallet = this.walletsRepository.create({
+            hubWallet = manager.create(Wallet, {
               user: hubCoordinator,
               balance: 0,
               hold_balance: 0,
             });
-            await this.walletsRepository.save(hubWallet);
+            await manager.save(Wallet, hubWallet);
           }
 
           const hubCommission =
@@ -811,33 +873,31 @@ export class OrdersService {
               Number(tariff.hub_commission_percent)) /
             100;
           hubWallet.balance = Number(hubWallet.balance) + hubCommission;
-          await this.walletsRepository.save(hubWallet);
+          await manager.save(Wallet, hubWallet);
 
-          const hubTx = this.transactionsRepository.create({
+          const hubTx = manager.create(Transaction, {
             wallet: hubWallet,
             order: savedOrder,
             amount: hubCommission,
             type: 'INCOME',
             description: `Hoa hồng chia sẻ nhượng quyền bưu cục đơn ${savedOrder.tracking_number}`,
           });
-          await this.transactionsRepository.save(hubTx);
+          await manager.save(Transaction, hubTx);
         }
       }
-    } catch (err) {
-      console.warn('Lỗi ghi nhận dòng tiền vào ví:', err);
-    }
 
-    // Ghi log hành trình chốt hạ (kèm tọa độ GPS cuối cùng)
-    await this.trackingsService.addTrackingRecord({
-      order: savedOrder,
-      status: 'FINISHED',
-      note: data.note || 'Giao hàng thành công. Khách đã nhận hàng.',
-      lat: data.lat,
-      long: data.long,
-      imageUrl: data.delivery_image_url,
+      // Ghi log hành trình chốt hạ (kèm tọa độ GPS cuối cùng)
+      await this.trackingsService.addTrackingRecordWithManager(manager, {
+        order: savedOrder,
+        status: 'FINISHED',
+        note: data.note || 'Giao hàng thành công. Khách đã nhận hàng.',
+        lat: data.lat,
+        long: data.long,
+        imageUrl: data.delivery_image_url,
+      });
+
+      return savedOrder;
     });
-
-    return savedOrder;
   }
 
   async returnOrder(

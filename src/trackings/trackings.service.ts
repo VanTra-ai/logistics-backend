@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { TrackingHistory } from './tracking.entity';
 import { Order } from '../orders/order.entity';
 
@@ -30,6 +30,21 @@ export class TrackingsService {
       image_url: data.imageUrl,
     });
     return await this.trackingsRepository.save(newTracking);
+  }
+
+  async addTrackingRecordWithManager(
+    manager: EntityManager,
+    data: TrackingData,
+  ): Promise<TrackingHistory> {
+    const newTracking = manager.create(TrackingHistory, {
+      order: data.order,
+      status: data.status,
+      note: data.note || '',
+      lat: data.lat,
+      long: data.long,
+      image_url: data.imageUrl,
+    });
+    return await manager.save(TrackingHistory, newTracking);
   }
 
   async findByOrderId(orderId: string): Promise<TrackingHistory[]> {

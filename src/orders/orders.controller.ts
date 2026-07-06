@@ -135,7 +135,7 @@ export class OrdersController {
   @UseGuards(RolesGuard)
   async scanIn(
     @Body() scanInDto: ScanInDto,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     // Xác định ai là người quét mã (để ghi log)
     const actor =
@@ -144,6 +144,7 @@ export class OrdersController {
     const result = await this.ordersService.scanInOrders(
       scanInDto.tracking_numbers,
       actor,
+      req.user.userId,
     );
 
     return {
@@ -157,7 +158,7 @@ export class OrdersController {
   @UseGuards(RolesGuard)
   async scanOut(
     @Body() scanOutDto: ScanOutDto,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const actor =
       req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Điều phối viên';
@@ -166,6 +167,7 @@ export class OrdersController {
       scanOutDto.tracking_numbers,
       scanOutDto.shipper_id,
       actor,
+      req.user.userId,
     );
 
     return {
