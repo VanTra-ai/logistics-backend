@@ -1,5 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { ConfigModule } from '@nestjs/config';
@@ -36,7 +36,10 @@ import { LocationsModule } from './locations/locations.module';
 import { MaterialsModule } from './materials/materials.module';
 import { AuditsModule } from './audits/audits.module';
 import { TmsModule } from './tms/tms.module';
-
+import { ClsModule } from 'nestjs-cls';
+import { AuditLog } from './audit-logs/audit-log.entity';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { UserClsInterceptor } from './audit-logs/user-cls.interceptor';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -64,6 +67,7 @@ import { TmsModule } from './tms/tms.module';
         OrderMaterial,
         Audit,
         AuditItem,
+        AuditLog,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),
@@ -81,12 +85,19 @@ import { TmsModule } from './tms/tms.module';
     MaterialsModule,
     AuditsModule,
     TmsModule,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    ClsModule.forRoot({ global: true, middleware: { mount: true } }),
+    AuditLogsModule,
   ],
   controllers: [],
   providers: [
     {
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: UserClsInterceptor,
     },
   ],
 })

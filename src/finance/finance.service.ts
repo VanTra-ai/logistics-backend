@@ -29,7 +29,9 @@ export class FinanceService implements OnModuleInit {
   }
 
   async getTariff(): Promise<FinanceTariff> {
-    let tariff = await this.tariffRepository.findOne({ where: { id: 'default' } });
+    let tariff = await this.tariffRepository.findOne({
+      where: { id: 'default' },
+    });
     if (!tariff) {
       tariff = this.tariffRepository.create({
         id: 'default',
