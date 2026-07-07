@@ -10,6 +10,7 @@ import {
 import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { Shipment } from '../shipments/shipment.entity';
+import { Location } from '../locations/location.entity';
 
 @Entity('orders')
 export class Order {
@@ -86,6 +87,12 @@ export class Order {
 
   @ManyToOne(() => Shipment, (shipment) => shipment.orders, { nullable: true })
   shipment!: Shipment;
+
+  @ManyToOne(() => Location, { nullable: true, eager: false })
+  location!: Location;
+
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  material_fee!: number;
 
   @CreateDateColumn()
   created_at!: Date;

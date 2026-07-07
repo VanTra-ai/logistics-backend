@@ -16,6 +16,11 @@ import { Transaction } from './wallets/transaction.entity';
 import { Rating } from './ratings/rating.entity';
 import { Ticket } from './tickets/ticket.entity';
 import { FinanceTariff } from './finance/finance.entity';
+import { Location } from './locations/location.entity';
+import { Material } from './materials/material.entity';
+import { OrderMaterial } from './materials/order-material.entity';
+import { Audit } from './audits/audit.entity';
+import { AuditItem } from './audits/audit-item.entity';
 
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
@@ -27,6 +32,9 @@ import { RatingsModule } from './ratings/ratings.module';
 import { ShipmentsModule } from './shipments/shipments.module';
 import { StatisticsModule } from './statistics/statistics.module';
 import { FinanceModule } from './finance/finance.module';
+import { LocationsModule } from './locations/locations.module';
+import { MaterialsModule } from './materials/materials.module';
+import { AuditsModule } from './audits/audits.module';
 
 @Module({
   imports: [
@@ -50,6 +58,11 @@ import { FinanceModule } from './finance/finance.module';
         Rating,
         Ticket,
         FinanceTariff,
+        Location,
+        Material,
+        OrderMaterial,
+        Audit,
+        AuditItem,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),
@@ -63,6 +76,9 @@ import { FinanceModule } from './finance/finance.module';
     ShipmentsModule,
     StatisticsModule,
     FinanceModule,
+    LocationsModule,
+    MaterialsModule,
+    AuditsModule,
   ],
   controllers: [],
   providers: [
