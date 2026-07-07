@@ -10,7 +10,10 @@ import {
   Request,
   Res,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import {
   OrdersService,
@@ -31,13 +34,41 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 
+import { OrdersExcelService } from './orders-excel.service';
+
 @Controller('orders')
 @UseGuards(AuthGuard('jwt'))
 export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly labelService: LabelService,
+    private readonly ordersExcelService: OrdersExcelService,
   ) {}
+
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(RolesGuard)
+  async importExcel(
+    @UploadedFile()
+    file: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      buffer: Buffer;
+      size: number;
+    },
+  ) {
+    if (!file) {
+      return { message: 'Không tìm thấy file tải lên.' };
+    }
+    const orders = await this.ordersExcelService.importOrders(file.buffer);
+    return {
+      message: `Nhập thành công ${orders.length} đơn hàng!`,
+      data: orders,
+    };
+  }
 
   @Post()
   async createOrder(

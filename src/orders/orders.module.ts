@@ -3,7 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { OrdersPublicController } from './orders-public.controller';
+import { ExportsController } from './exports.controller';
 import { LabelService } from './label.service';
+import { OrdersExcelService } from './orders-excel.service';
 import { Order } from './order.entity';
 import { User } from '../users/user.entity';
 import { Wallet } from '../wallets/wallet.entity';
@@ -19,10 +21,11 @@ import { FinanceModule } from '../finance/finance.module';
     TrackingsModule,
     FinanceModule,
   ],
-  providers: [OrdersService, LabelService],
+  providers: [OrdersService, LabelService, OrdersExcelService],
   controllers: [
     OrdersController, // API cho Admin/Shipper
     OrdersPublicController, // API cho khách tra cứu
+    ExportsController, // API cho Export Excel
   ],
   exports: [OrdersService],
 })
