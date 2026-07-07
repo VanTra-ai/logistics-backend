@@ -35,6 +35,7 @@ import { FinanceModule } from './finance/finance.module';
 import { LocationsModule } from './locations/locations.module';
 import { MaterialsModule } from './materials/materials.module';
 import { AuditsModule } from './audits/audits.module';
+import { TmsModule } from './tms/tms.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { AuditsModule } from './audits/audits.module';
     LocationsModule,
     MaterialsModule,
     AuditsModule,
+    TmsModule,
   ],
   controllers: [],
   providers: [

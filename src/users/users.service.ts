@@ -178,6 +178,20 @@ export class UsersService {
     return safeUser;
   }
 
+  async updateLocation(
+    userId: string,
+    latitude: number,
+    longitude: number,
+  ): Promise<void> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại!');
+    }
+    user.current_latitude = latitude;
+    user.current_longitude = longitude;
+    await this.usersRepository.save(user);
+  }
+
   async findAllUsers(): Promise<User[]> {
     return this.usersRepository.find({
       relations: { hub: true },

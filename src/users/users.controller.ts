@@ -56,6 +56,20 @@ export class UsersController {
     return this.usersService.updateProfile(req.user.userId, updateProfileDto);
   }
 
+  @UseGuards(AuthGuard('jwt'))
+  @Patch('location')
+  async updateLocation(
+    @Request() req: { user: { userId: string } },
+    @Body() body: { latitude: number; longitude: number },
+  ) {
+    await this.usersService.updateLocation(
+      req.user.userId,
+      body.latitude,
+      body.longitude,
+    );
+    return { message: 'Cập nhật vị trí thành công!' };
+  }
+
   @Get()
   @Roles(Role.ADMIN)
   @UseGuards(AuthGuard('jwt'), RolesGuard)

@@ -22,7 +22,7 @@ export class Order {
   tracking_number!: string;
 
   @Column({ default: 'PENDING' })
-  current_status!: string; // PENDING, PICKING, DELIVERING, FINISHED, FAILED
+  current_status!: string; // PENDING, PICKING, AT_HUB, DELIVERING, FINISHED, FAILED
 
   // 2. Thông tin Người gửi
   @Column()
@@ -64,6 +64,16 @@ export class Order {
 
   @Column('text', { nullable: true })
   delivery_image_url!: string; // Hình xác nhận
+
+  // TMS Delivery Coordinates
+  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  latitude!: number;
+
+  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  longitude!: number;
+
+  @Column({ type: 'int', default: 0 })
+  delivery_sequence!: number;
 
   // Thêm vào bên trong class Order
   @Column('decimal', { precision: 10, scale: 2, default: 0 })

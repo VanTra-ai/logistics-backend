@@ -25,6 +25,12 @@ export class User {
   @Column({ type: 'text', nullable: true })
   address?: string;
 
+  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  current_latitude!: number | null;
+
+  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  current_longitude!: number | null;
+
   @Column()
   password_hash!: string;
 
