@@ -8,7 +8,10 @@ import {
   Body,
   UseGuards,
   Request,
+  Res,
+  HttpStatus,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   OrdersService,
   CreateOrderDto,
@@ -23,6 +26,7 @@ import {
   RemitOrdersDto,
   UpdateOrderDto,
 } from './orders.service';
+import { LabelService } from './label.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -30,7 +34,10 @@ import { Roles } from '../common/decorators/roles.decorator';
 @Controller('orders')
 @UseGuards(AuthGuard('jwt'))
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly labelService: LabelService,
+  ) {}
 
   @Post()
   async createOrder(
@@ -92,6 +99,31 @@ export class OrdersController {
   @UseGuards(RolesGuard)
   async getStatistics() {
     return await this.ordersService.getStatistics();
+  }
+
+  /**
+   * GET /orders/:id/label
+   * Xuất nhãn vận chuyển PDF khổ A6 cho đơn hàng.
+   * Trả về inline PDF để trình duyệt/mobile preview trực tiếp.
+   */
+  @Get(':id/label')
+  @UseGuards(AuthGuard('jwt'))
+  async getShippingLabel(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdfBuffer = await this.labelService.generateShippingLabel(id);
+
+    res.status(HttpStatus.OK);
+    res.setHeader('Content-Type', 'application/pdf');
+    // inline → browser/WebView hiển thị ngay; attachment → bắt buộc tải xuống
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="label-${id.slice(0, 8)}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(pdfBuffer);
   }
 
   @Patch(':id/cancel')
