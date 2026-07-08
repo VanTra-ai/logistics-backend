@@ -14,6 +14,7 @@ import { Shipment } from './shipments/shipment.entity';
 import { Address } from './addresses/address.entity';
 import { Wallet } from './wallets/wallet.entity';
 import { Transaction } from './wallets/transaction.entity';
+import { WalletRequest } from './wallets/wallet-request.entity';
 import { Rating } from './ratings/rating.entity';
 import { Ticket } from './tickets/ticket.entity';
 import { FinanceTariff } from './finance/finance.entity';
@@ -81,6 +82,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
         DailyStats,
         OrderIncident,
         Notification,
+        WalletRequest,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),

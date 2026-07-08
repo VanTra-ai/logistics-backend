@@ -878,7 +878,11 @@ export class OrdersService {
         await queryRunner.manager.save(Wallet, shipperWallet);
       }
 
-      const shipperPayout = Number(savedOrder.shipping_fee) * 0.1;
+      const shipperPayoutPercent = Number(tariff.shipper_payout_percent);
+      const shipperPayout =
+        shipperPayoutPercent > 0
+          ? (Number(savedOrder.shipping_fee) * shipperPayoutPercent) / 100
+          : Number(tariff.shipper_payout_flat);
 
       shipperWallet.income_balance =
         Number(shipperWallet.income_balance) + shipperPayout;

@@ -5,6 +5,8 @@ import {
   Body,
   UseGuards,
   Request,
+  Param,
+  Patch,
 } from '@nestjs/common';
 import { WalletsService } from './wallets.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -19,18 +21,44 @@ export class WalletsController {
   @Get()
   @Roles('ADMIN')
   async findAll() {
-    return this.walletsService.findAll();
+    return await this.walletsService.findAll();
   }
 
   @Get('me')
   @Roles('SHIPPER')
   async findMyWallet(@Request() req: { user: { sub: string } }) {
-    return this.walletsService.findMyWallet(req.user.sub);
+    return await this.walletsService.findMyWallet(req.user.sub);
   }
 
-  @Post('remit-cod')
-  @Roles('ADMIN') // Assuming only admin or coordinator can remit cod on behalf of shipper? Or shipper remits themselves? The current implementation takes shipperId from body. Let's restrict it to ADMIN for now, or keep it open if it's meant for Shipper? The user didn't mention remit-cod, but it takes shipperId. Let's allow ADMIN.
-  async remitCod(@Body() body: { shipperId: string; amount: number }) {
-    return this.walletsService.remitCod(body.shipperId, body.amount);
+  @Get('requests')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  async getRequests() {
+    return await this.walletsService.getRequests();
+  }
+
+  @Post('requests')
+  @Roles('SHIPPER', 'HUB_COORDINATOR')
+  async createRequest(
+    @Request() req: { user: { sub: string } },
+    @Body()
+    body: {
+      type: string;
+      amount: number;
+      orderIds?: string[];
+      bankAccountInfo?: string;
+      remarks?: string;
+    },
+  ) {
+    return await this.walletsService.createRequest(req.user.sub, body);
+  }
+
+  @Patch('requests/:id/approve')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  async approveRequest(
+    @Param('id') id: string,
+    @Request() req: { user: { sub: string } },
+    @Body() body: { status: string; remarks?: string },
+  ) {
+    return await this.walletsService.approveRequest(id, req.user.sub, body);
   }
 }
