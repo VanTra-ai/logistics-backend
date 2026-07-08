@@ -178,6 +178,28 @@ export class UsersService {
     return safeUser;
   }
 
+  async changePassword(
+    userId: string,
+    oldPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại!');
+    }
+
+    const isPasswordValid = await bcrypt.compare(
+      oldPassword,
+      user.password_hash,
+    );
+    if (!isPasswordValid) {
+      throw new ConflictException('Mật khẩu cũ không chính xác!');
+    }
+
+    user.password_hash = await bcrypt.hash(newPassword, 10);
+    await this.usersRepository.save(user);
+  }
+
   async updateLocation(
     userId: string,
     latitude: number,

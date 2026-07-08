@@ -166,7 +166,7 @@ export class OrdersController {
   }
 
   @Get('statistics')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR', 'CUSTOMER', 'SHIPPER')
   @UseGuards(RolesGuard)
   async getStatistics() {
     return await this.ordersService.getStatistics();

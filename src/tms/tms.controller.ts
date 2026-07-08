@@ -10,7 +10,7 @@ export class TmsController {
   constructor(private readonly tmsService: TmsService) {}
 
   @Post('auto-dispatch')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async autoDispatch() {
     return this.tmsService.autoDispatch();

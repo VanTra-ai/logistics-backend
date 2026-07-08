@@ -17,6 +17,7 @@ import { UsersService } from './users.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RegisterUserDto } from './dto/register-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 // @Controller('users') quy định rằng mọi API trong file này đều bắt đầu bằng http://localhost:3000/users
 @Controller('users')
@@ -57,6 +58,20 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard('jwt'))
+  @Patch('change-password')
+  async changePassword(
+    @Request() req: { user: { userId: string } },
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    await this.usersService.changePassword(
+      req.user.userId,
+      changePasswordDto.oldPassword,
+      changePasswordDto.newPassword,
+    );
+    return { message: 'Đổi mật khẩu thành công!' };
+  }
+
+  @UseGuards(AuthGuard('jwt'))
   @Patch('location')
   async updateLocation(
     @Request() req: { user: { userId: string } },
@@ -71,7 +86,7 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async getAllUsers() {
     return await this.usersService.findAllUsers();

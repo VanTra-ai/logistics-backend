@@ -15,7 +15,7 @@ export class Shipment {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ unique: true, nullable: true })
+  @Column({ type: 'varchar', unique: true, nullable: true })
   shipment_code!: string | null;
 
   // Tài xế / Shipper phụ trách chuyến xe

@@ -11,7 +11,7 @@ export class Hub {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ unique: true, nullable: true })
+  @Column({ type: 'varchar', unique: true, nullable: true })
   hub_code!: string | null;
 
   @Column()
