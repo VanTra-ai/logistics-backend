@@ -16,6 +16,9 @@ export class AuditLog {
   @Column()
   action!: string;
 
+  @Column({ nullable: true })
+  subAction!: string;
+
   @Column()
   entityName!: string;
 

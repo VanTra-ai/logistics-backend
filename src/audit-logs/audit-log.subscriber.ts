@@ -34,6 +34,13 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     auditLog.entityId = entityId;
     auditLog.newValues = event.entity;
 
+    if (
+      auditLog.entityName === 'order_materials' ||
+      event.metadata.targetName === 'OrderMaterial'
+    ) {
+      auditLog.subAction = 'PACKAGING';
+    }
+
     event.manager
       .getRepository(AuditLog)
       .insert(auditLog)
@@ -55,6 +62,25 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     auditLog.entityId = entityId;
     auditLog.oldValues = event.databaseEntity;
     auditLog.newValues = event.entity;
+
+    if (
+      auditLog.entityName === 'orders' ||
+      event.metadata.targetName === 'Order'
+    ) {
+      // location might be a relation or a column
+      const oldLocationId =
+        event.databaseEntity?.location?.id ?? event.databaseEntity?.locationId;
+      const newLocationId =
+        event.entity?.location?.id ?? event.entity?.locationId;
+      if (newLocationId !== undefined && oldLocationId !== newLocationId) {
+        auditLog.subAction = 'PUT_AWAY';
+      } else if (
+        event.entity?.current_status !== undefined &&
+        event.databaseEntity?.current_status !== event.entity?.current_status
+      ) {
+        auditLog.subAction = 'STATUS_CHANGE';
+      }
+    }
 
     event.manager
       .getRepository(AuditLog)

@@ -45,6 +45,9 @@ export class Shipment {
   @OneToMany(() => Order, (order) => order.shipment)
   orders!: Order[];
 
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  total_distance!: number;
+
   @CreateDateColumn()
   created_at!: Date;
 }

@@ -4,6 +4,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { User } from './users/user.entity';
 import { Hub } from './hubs/hub.entity';
@@ -40,6 +41,8 @@ import { ClsModule } from 'nestjs-cls';
 import { AuditLog } from './audit-logs/audit-log.entity';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { UserClsInterceptor } from './audit-logs/user-cls.interceptor';
+import { ReportsModule } from './reports/reports.module';
+import { DailyStats } from './reports/daily-stat.entity';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -68,6 +71,7 @@ import { UserClsInterceptor } from './audit-logs/user-cls.interceptor';
         Audit,
         AuditItem,
         AuditLog,
+        DailyStats,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),
@@ -88,6 +92,9 @@ import { UserClsInterceptor } from './audit-logs/user-cls.interceptor';
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     ClsModule.forRoot({ global: true, middleware: { mount: true } }),
     AuditLogsModule,
+    ReportsModule,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    ScheduleModule.forRoot(),
   ],
   controllers: [],
   providers: [
