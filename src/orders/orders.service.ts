@@ -268,6 +268,9 @@ export class RemitOrdersDto {
   order_ids!: string[]; // Truyền lên một mảng các ID đơn hàng cần chốt tiền
 }
 
+import { LocationsService } from '../locations/locations.service';
+import { MaterialsService } from '../materials/materials.service';
+
 @Injectable()
 export class OrdersService {
   // KHAI BÁO CÁC SERVICE SẼ SỬ DỤNG Ở ĐÂY
@@ -283,6 +286,8 @@ export class OrdersService {
     private hubsService: HubsService,
     private trackingsService: TrackingsService,
     private financeService: FinanceService,
+    private locationsService: LocationsService,
+    private materialsService: MaterialsService,
     private dataSource: DataSource,
     private eventEmitter: EventEmitter2,
   ) {}
@@ -481,7 +486,7 @@ export class OrdersService {
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id },
-      relations: { shipment: true },
+      relations: { shipment: true, location: true },
     });
 
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
@@ -519,6 +524,17 @@ export class OrdersService {
 
     // Cập nhật trạng thái
     order.current_status = 'CANCELLED';
+
+    // Rút hàng khỏi kệ và hoàn vật tư
+    await this.locationsService.removeOrderFromLocation(
+      order,
+      this.dataSource.manager,
+    );
+    await this.materialsService.rollbackMaterials(
+      order.id,
+      this.dataSource.manager,
+    );
+
     await this.ordersRepository.save(order);
 
     // Ghi log vào tracking với note phân loại người hủy
@@ -735,7 +751,7 @@ export class OrdersService {
       // 2. Lấy danh sách đơn hàng từ CSDL
       const orders = await manager.find(Order, {
         where: { tracking_number: In(trackingNumbers) },
-        relations: { pickup_hub: true },
+        relations: { pickup_hub: true, location: true },
         lock: { mode: 'pessimistic_write' },
       });
 
@@ -784,6 +800,7 @@ export class OrdersService {
       for (const order of validOrders) {
         order.current_status = 'DELIVERING';
         order.shipper = shipper; // Ghi đè Shipper đi lấy hàng bằng Shipper đi giao hàng
+        await this.locationsService.removeOrderFromLocation(order, manager);
       }
 
       // Cập nhật hàng loạt (Bulk Update)
@@ -939,7 +956,8 @@ export class OrdersService {
           const hubCommission =
             (Number(savedOrder.shipping_fee) *
               Number(tariff.hub_commission_percent)) /
-            100;
+              100 +
+            Number(savedOrder.material_fee || 0);
           hubWallet.income_balance =
             Number(hubWallet.income_balance) + hubCommission;
           await queryRunner.manager.save(Wallet, hubWallet);
@@ -1033,6 +1051,7 @@ export class OrdersService {
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
+      relations: { location: true },
     });
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
@@ -1052,6 +1071,10 @@ export class OrdersService {
     // Cập nhật trạng thái và bàn giao cho Shipper mới (hoặc cũ)
     order.current_status = 'DELIVERING';
     order.shipper = shipper;
+    await this.locationsService.removeOrderFromLocation(
+      order,
+      this.dataSource.manager,
+    );
 
     const savedOrder = await this.ordersRepository.save(order);
 
@@ -1074,6 +1097,7 @@ export class OrdersService {
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
+      relations: { location: true },
     });
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
@@ -1085,6 +1109,10 @@ export class OrdersService {
 
     // Chốt trạng thái hoàn vĩnh viễn
     order.current_status = 'RETURNED_TO_SENDER';
+    await this.locationsService.removeOrderFromLocation(
+      order,
+      this.dataSource.manager,
+    );
 
     const savedOrder = await this.ordersRepository.save(order);
 

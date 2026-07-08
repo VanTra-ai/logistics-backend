@@ -6,9 +6,14 @@ import { Shipment } from './shipment.entity';
 import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { TrackingsModule } from '../trackings/trackings.module';
+import { LocationsModule } from '../locations/locations.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Shipment, User, Hub]), TrackingsModule],
+  imports: [
+    TypeOrmModule.forFeature([Shipment, User, Hub]),
+    TrackingsModule,
+    LocationsModule,
+  ],
   providers: [ShipmentsService],
   controllers: [ShipmentsController],
   exports: [ShipmentsService],

@@ -19,6 +19,7 @@ import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { Order } from '../orders/order.entity';
 import { TrackingsService } from '../trackings/trackings.service';
+import { LocationsService } from '../locations/locations.service';
 
 export class AssignOrdersDto {
   @IsArray()
@@ -85,6 +86,7 @@ export class ShipmentsService {
     private hubsRepository: Repository<Hub>,
     private dataSource: DataSource,
     private trackingsService: TrackingsService,
+    private locationsService: LocationsService,
   ) {}
 
   private async generateShipmentCode(): Promise<string> {
@@ -258,7 +260,11 @@ export class ShipmentsService {
   ) {
     const shipment = await this.shipmentsRepository.findOne({
       where: { id: shipmentId },
-      relations: { orders: true, destination_hub: true, origin_hub: true }, // Nạp kèm danh sách đơn hàng
+      relations: {
+        orders: { location: true },
+        destination_hub: true,
+        origin_hub: true,
+      }, // Nạp kèm danh sách đơn hàng và location
     });
 
     if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
@@ -286,6 +292,12 @@ export class ShipmentsService {
           order.current_status = shipment.destination_hub
             ? 'IN_TRANSIT'
             : 'DELIVERING';
+
+          // Rút hàng khỏi kệ (pick-out) khi xe bắt đầu chạy
+          await this.locationsService.removeOrderFromLocation(
+            order,
+            queryRunner.manager,
+          );
 
           // Ghi nhận mốc luân chuyển hành trình
           await this.trackingsService.addTrackingRecord({

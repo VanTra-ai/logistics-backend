@@ -174,4 +174,80 @@ export class AuditsService {
       };
     });
   }
+
+  async reconcile(auditId: string) {
+    return await this.dataSource.transaction(async (manager) => {
+      const audit = await manager.findOne(Audit, {
+        where: { id: auditId },
+        relations: { items: { location: { hub: true } } },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!audit) throw new NotFoundException('Kỳ kiểm kê không tồn tại');
+      if (audit.status !== 'COMPLETED') {
+        throw new BadRequestException(
+          'Chỉ có thể đồng bộ thực tế (reconcile) các kỳ kiểm kê đã COMPLETED',
+        );
+      }
+
+      let updatedCount = 0;
+
+      for (const item of audit.items) {
+        if (item.status === 'RECONCILED') continue;
+
+        if (item.status === 'WRONG_LOCATION' || item.status === 'MISSING') {
+          // Khóa Order để cập nhật an toàn
+          const orderId = item.expected_order_id || item.scanned_order_id;
+          if (!orderId) continue;
+
+          const order = await manager.findOne(Order, {
+            where: { id: orderId },
+            relations: { location: true },
+            lock: { mode: 'pessimistic_write' },
+          });
+
+          if (!order) continue;
+
+          // Nếu MISSING, gỡ hàng khỏi kệ (order.location = null)
+          if (item.status === 'MISSING') {
+            order.location = null as any;
+          }
+          // Nếu WRONG_LOCATION, gán vào kệ vừa quét được
+          else if (item.status === 'WRONG_LOCATION') {
+            order.location = item.location;
+          }
+
+          await manager.save(Order, order);
+
+          // Cập nhật lại status của location cũ và mới
+          // Sẽ cần cập nhật trạng thái location. Nhưng đơn giản nhất là kệ nào bị ảnh hưởng thì cập nhật
+          if (item.location) {
+            const loc = await manager.findOne(Location, {
+              where: { id: item.location.id },
+              relations: { orders: true },
+            });
+            if (loc) {
+              const ordersCount = loc.orders.length;
+              loc.status =
+                ordersCount === 0
+                  ? 'EMPTY'
+                  : ordersCount >= loc.max_capacity
+                    ? 'FULL'
+                    : 'OCCUPIED';
+              await manager.save(Location, loc);
+            }
+          }
+
+          item.status = 'RECONCILED';
+          await manager.save(AuditItem, item);
+          updatedCount++;
+        }
+      }
+
+      return {
+        message: 'Đã đồng bộ kết quả kiểm kê thành công',
+        updatedCount,
+      };
+    });
+  }
 }

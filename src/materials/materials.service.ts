@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, EntityManager } from 'typeorm';
 import { Material } from './material.entity';
 import { OrderMaterial } from './order-material.entity';
 import { Order } from '../orders/order.entity';
@@ -113,5 +113,43 @@ export class MaterialsService {
         total_material_fee: order.material_fee,
       };
     });
+  }
+
+  async rollbackMaterials(orderId: string, manager: EntityManager) {
+    // Tìm các bản ghi OrderMaterial của đơn hàng này
+    const orderMaterials = await manager.find(OrderMaterial, {
+      where: { order: { id: orderId } },
+      relations: { material: true },
+    });
+
+    if (orderMaterials.length === 0) return;
+
+    for (const om of orderMaterials) {
+      if (om.quantity > 0) {
+        // Hoàn lại kho
+        const material = await manager.findOne(Material, {
+          where: { id: om.material.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+
+        if (material) {
+          material.stock += om.quantity;
+          await manager.save(Material, material);
+        }
+
+        // Đánh dấu là đã hoàn
+        om.quantity = 0;
+        await manager.save(OrderMaterial, om);
+      }
+    }
+
+    // Reset material_fee của đơn hàng
+    const order = await manager.findOne(Order, {
+      where: { id: orderId },
+    });
+    if (order) {
+      order.material_fee = 0;
+      await manager.save(Order, order);
+    }
   }
 }

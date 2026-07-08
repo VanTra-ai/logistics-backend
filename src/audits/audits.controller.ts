@@ -72,4 +72,11 @@ export class AuditsController {
       scannedTrackingNumbers,
     );
   }
+
+  @Post(':id/reconcile')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(RolesGuard)
+  reconcile(@Param('id') id: string) {
+    return this.auditsService.reconcile(id);
+  }
 }

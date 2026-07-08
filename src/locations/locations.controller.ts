@@ -54,7 +54,7 @@ export class PutawayController {
   constructor(private readonly locationsService: LocationsService) {}
 
   @Patch(':id/putaway')
-  @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(RolesGuard)
   putaway(@Param('id') id: string, @Body('barcode') barcode: string) {
     return this.locationsService.putaway(id, barcode);

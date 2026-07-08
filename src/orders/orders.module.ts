@@ -13,6 +13,8 @@ import { Transaction } from '../wallets/transaction.entity';
 import { HubsModule } from '../hubs/hubs.module';
 import { TrackingsModule } from '../trackings/trackings.module';
 import { FinanceModule } from '../finance/finance.module';
+import { LocationsModule } from '../locations/locations.module';
+import { MaterialsModule } from '../materials/materials.module';
 import { OrdersListener } from './orders.listener';
 
 @Module({
@@ -21,6 +23,8 @@ import { OrdersListener } from './orders.listener';
     HubsModule,
     TrackingsModule,
     FinanceModule,
+    LocationsModule,
+    MaterialsModule,
   ],
   providers: [OrdersService, LabelService, OrdersExcelService, OrdersListener],
   controllers: [
