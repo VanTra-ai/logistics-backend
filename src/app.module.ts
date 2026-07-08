@@ -45,6 +45,7 @@ import { ReportsModule } from './reports/reports.module';
 import { DailyStats } from './reports/daily-stat.entity';
 import { IncidentsModule } from './incidents/incidents.module';
 import { OrderIncident } from './incidents/incident.entity';
+import { WalletsModule } from './wallets/wallets.module';
 
 @Module({
   imports: [
@@ -97,6 +98,7 @@ import { OrderIncident } from './incidents/incident.entity';
     AuditLogsModule,
     ReportsModule,
     IncidentsModule,
+    WalletsModule,
     ScheduleModule.forRoot(),
   ],
   controllers: [],

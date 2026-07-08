@@ -828,23 +828,20 @@ export class OrdersService {
           throw new NotFoundException('Không tìm thấy tài xế để tạo ví!');
         shipperWallet = queryRunner.manager.create(Wallet, {
           user,
-          balance: 0,
-          hold_balance: 0,
+          income_balance: 0,
+          cod_debt: 0,
         });
         await queryRunner.manager.save(Wallet, shipperWallet);
       }
 
-      const shipperPayout =
-        Number(tariff.shipper_payout_flat) +
-        (Number(savedOrder.shipping_fee) *
-          Number(tariff.shipper_payout_percent)) /
-          100;
+      const shipperPayout = Number(savedOrder.shipping_fee) * 0.1;
 
-      shipperWallet.balance = Number(shipperWallet.balance) + shipperPayout;
+      shipperWallet.income_balance =
+        Number(shipperWallet.income_balance) + shipperPayout;
 
       if (savedOrder.cod_amount > 0) {
-        shipperWallet.hold_balance =
-          Number(shipperWallet.hold_balance) + Number(savedOrder.cod_amount);
+        shipperWallet.cod_debt =
+          Number(shipperWallet.cod_debt) + Number(savedOrder.cod_amount);
       }
       await queryRunner.manager.save(Wallet, shipperWallet);
 
@@ -853,7 +850,7 @@ export class OrdersService {
         wallet: shipperWallet,
         order: savedOrder,
         amount: shipperPayout,
-        type: 'INCOME',
+        type: 'COMMISSION_EARNED',
         description: `Chiết khấu giao hàng thành công đơn ${savedOrder.tracking_number}`,
       });
       await queryRunner.manager.save(Transaction, payoutTx);
@@ -862,8 +859,8 @@ export class OrdersService {
         const codLiabilityTx = queryRunner.manager.create(Transaction, {
           wallet: shipperWallet,
           order: savedOrder,
-          amount: -Number(savedOrder.cod_amount),
-          type: 'DEBT',
+          amount: Number(savedOrder.cod_amount),
+          type: 'COD_COLLECTED',
           description: `Công nợ thu hộ COD đơn ${savedOrder.tracking_number} (Tạm giữ)`,
         });
         await queryRunner.manager.save(Transaction, codLiabilityTx);
@@ -885,8 +882,8 @@ export class OrdersService {
           if (!hubWallet) {
             hubWallet = queryRunner.manager.create(Wallet, {
               user: hubCoordinator,
-              balance: 0,
-              hold_balance: 0,
+              income_balance: 0,
+              cod_debt: 0,
             });
             await queryRunner.manager.save(Wallet, hubWallet);
           }
@@ -895,14 +892,15 @@ export class OrdersService {
             (Number(savedOrder.shipping_fee) *
               Number(tariff.hub_commission_percent)) /
             100;
-          hubWallet.balance = Number(hubWallet.balance) + hubCommission;
+          hubWallet.income_balance =
+            Number(hubWallet.income_balance) + hubCommission;
           await queryRunner.manager.save(Wallet, hubWallet);
 
           const hubTx = queryRunner.manager.create(Transaction, {
             wallet: hubWallet,
             order: savedOrder,
             amount: hubCommission,
-            type: 'INCOME',
+            type: 'COMMISSION_EARNED',
             description: `Hoa hồng chia sẻ nhượng quyền bưu cục đơn ${savedOrder.tracking_number}`,
           });
           await queryRunner.manager.save(Transaction, hubTx);
@@ -1098,9 +1096,9 @@ export class OrdersService {
             lock: { mode: 'pessimistic_write' },
           });
           if (shipperWallet) {
-            shipperWallet.hold_balance = Math.max(
+            shipperWallet.cod_debt = Math.max(
               0,
-              Number(shipperWallet.hold_balance) - Number(order.cod_amount),
+              Number(shipperWallet.cod_debt) - Number(order.cod_amount),
             );
             await queryRunner.manager.save(Wallet, shipperWallet);
 
@@ -1108,8 +1106,8 @@ export class OrdersService {
             const clearLiabilityTx = queryRunner.manager.create(Transaction, {
               wallet: shipperWallet,
               order: order,
-              amount: Number(order.cod_amount),
-              type: 'REMIT',
+              amount: -Number(order.cod_amount),
+              type: 'COD_REMITTED',
               description: `Đối soát nộp quỹ COD thành công đơn ${order.tracking_number} cho bưu cục`,
             });
             await queryRunner.manager.save(Transaction, clearLiabilityTx);

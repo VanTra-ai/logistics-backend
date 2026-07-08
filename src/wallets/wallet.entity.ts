@@ -17,8 +17,8 @@ export class Wallet {
   user!: User;
 
   @Column('decimal', { precision: 15, scale: 2, default: 0 })
-  balance!: number;
+  income_balance!: number;
 
   @Column('decimal', { precision: 15, scale: 2, default: 0 })
-  hold_balance!: number;
+  cod_debt!: number;
 }

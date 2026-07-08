@@ -25,6 +25,7 @@ export class Transaction {
   @Column('decimal', { precision: 15, scale: 2 })
   amount!: number;
 
+  // Semantic enum values: COD_COLLECTED, COD_REMITTED, COMMISSION_EARNED, INCOME_WITHDRAWN
   @Column()
   type!: string;
 
