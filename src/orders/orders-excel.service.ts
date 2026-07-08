@@ -2,7 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as exceljs from 'exceljs';
 import { Order } from './order.entity';
-
+import { User } from '../users/user.entity';
 @Injectable()
 export class OrdersExcelService {
   constructor(private readonly dataSource: DataSource) {}
@@ -113,6 +113,121 @@ export class OrdersExcelService {
       await queryRunner.rollbackTransaction();
       const dbError = err as { code?: string; message?: string };
       // Bắt lỗi trùng lặp Tracking Number (Unique constraint)
+      if (dbError.code === '23505' || dbError.code === 'ER_DUP_ENTRY') {
+        throw new BadRequestException(
+          `Lỗi trùng lặp dữ liệu: Mã vận đơn đã tồn tại trên hệ thống.`,
+        );
+      }
+      throw new BadRequestException(
+        `Lỗi database khi import: ${dbError.message}`,
+      );
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Import đơn hàng từ file Excel/CSV do Customer upload.
+   */
+  async importCustomerOrders(
+    fileBuffer: Buffer,
+    customer: User,
+  ): Promise<Order[]> {
+    const workbook = new exceljs.Workbook();
+    try {
+      await workbook.xlsx.load(fileBuffer as unknown as ArrayBuffer);
+    } catch {
+      throw new BadRequestException(
+        'File không hợp lệ hoặc không đúng định dạng Excel (.xlsx).',
+      );
+    }
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new BadRequestException(
+        'File không có dữ liệu (không có sheet nào).',
+      );
+    }
+
+    const rowErrors: string[] = [];
+    const ordersToCreate: Partial<Order>[] = [];
+
+    worksheet.eachRow((row, rowNumber) => {
+      // Bỏ qua dòng tiêu đề
+      if (rowNumber === 1) return;
+
+      const tracking_number = row.getCell(1).text?.trim();
+      const sender_name = row.getCell(2).text?.trim();
+      const sender_phone = row.getCell(3).text?.trim();
+      const sender_address = row.getCell(4).text?.trim();
+      const receiver_name = row.getCell(5).text?.trim();
+      const receiver_phone = row.getCell(6).text?.trim();
+      const receiver_address = row.getCell(7).text?.trim();
+      const weightStr = row.getCell(8).text?.trim();
+      const codStr = row.getCell(9).text?.trim();
+
+      const rowErrorDetails: string[] = [];
+
+      if (!tracking_number) rowErrorDetails.push('Thiếu Mã vận đơn');
+      if (!sender_name) rowErrorDetails.push('Thiếu Người gửi');
+      if (!sender_phone) rowErrorDetails.push('Thiếu SĐT gửi');
+      if (!sender_address) rowErrorDetails.push('Thiếu Địa chỉ gửi');
+      if (!receiver_name) rowErrorDetails.push('Thiếu Người nhận');
+      if (!receiver_phone) rowErrorDetails.push('Thiếu SĐT nhận');
+      if (!receiver_address) rowErrorDetails.push('Thiếu Địa chỉ nhận');
+
+      const weight = weightStr ? parseFloat(weightStr) : 0;
+      const cod_amount = codStr ? parseFloat(codStr) : 0;
+
+      if (isNaN(weight)) rowErrorDetails.push('Khối lượng không hợp lệ');
+      if (isNaN(cod_amount)) rowErrorDetails.push('COD không hợp lệ');
+
+      if (rowErrorDetails.length > 0) {
+        rowErrors.push(`Dòng ${rowNumber}: ${rowErrorDetails.join(', ')}`);
+      } else {
+        ordersToCreate.push({
+          tracking_number,
+          sender_name,
+          sender_phone,
+          sender_address,
+          receiver_name,
+          receiver_phone,
+          receiver_address,
+          weight,
+          cod_amount,
+          current_status: 'PENDING',
+          cod_status: 'PENDING',
+          customer,
+        });
+      }
+    });
+
+    if (rowErrors.length > 0) {
+      throw new BadRequestException({
+        message:
+          'Dữ liệu file không hợp lệ, thao tác bị huỷ bỏ (Rollback toàn bộ).',
+        errors: rowErrors,
+      });
+    }
+
+    if (ordersToCreate.length === 0) {
+      throw new BadRequestException(
+        'Không tìm thấy dữ liệu đơn hàng nào để import.',
+      );
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const orderRepository = queryRunner.manager.getRepository(Order);
+      const savedOrders = await orderRepository.save(ordersToCreate);
+      await queryRunner.commitTransaction();
+      return savedOrders;
+    } catch (err: unknown) {
+      await queryRunner.rollbackTransaction();
+      const dbError = err as { code?: string; message?: string };
       if (dbError.code === '23505' || dbError.code === 'ER_DUP_ENTRY') {
         throw new BadRequestException(
           `Lỗi trùng lặp dữ liệu: Mã vận đơn đã tồn tại trên hệ thống.`,

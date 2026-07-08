@@ -46,6 +46,8 @@ import { DailyStats } from './reports/daily-stat.entity';
 import { IncidentsModule } from './incidents/incidents.module';
 import { OrderIncident } from './incidents/incident.entity';
 import { WalletsModule } from './wallets/wallets.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { Notification } from './notifications/notification.entity';
 
 @Module({
   imports: [
@@ -77,6 +79,7 @@ import { WalletsModule } from './wallets/wallets.module';
         AuditLog,
         DailyStats,
         OrderIncident,
+        Notification,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),
@@ -100,6 +103,7 @@ import { WalletsModule } from './wallets/wallets.module';
     IncidentsModule,
     WalletsModule,
     ScheduleModule.forRoot(),
+    NotificationsModule,
   ],
   controllers: [],
   providers: [

@@ -15,6 +15,9 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from '../users/user.entity';
 import {
   OrdersService,
   CreateOrderDto,
@@ -43,6 +46,8 @@ export class OrdersController {
     private readonly ordersService: OrdersService,
     private readonly labelService: LabelService,
     private readonly ordersExcelService: OrdersExcelService,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {}
 
   @Post('import')
@@ -64,6 +69,41 @@ export class OrdersController {
       return { message: 'Không tìm thấy file tải lên.' };
     }
     const orders = await this.ordersExcelService.importOrders(file.buffer);
+    return {
+      message: `Nhập thành công ${orders.length} đơn hàng!`,
+      data: orders,
+    };
+  }
+
+  @Post('customer/bulk-upload')
+  @UseInterceptors(FileInterceptor('file'))
+  @Roles('CUSTOMER')
+  @UseGuards(RolesGuard)
+  async importCustomerBulkUpload(
+    @UploadedFile()
+    file: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      buffer: Buffer;
+      size: number;
+    },
+    @Request() req: { user: { userId: string } },
+  ) {
+    if (!file) {
+      return { message: 'Không tìm thấy file tải lên.' };
+    }
+    const user = await this.userRepository.findOne({
+      where: { id: req.user.userId },
+    });
+    if (!user) {
+      return { message: 'Không tìm thấy người dùng.' };
+    }
+    const orders = await this.ordersExcelService.importCustomerOrders(
+      file.buffer,
+      user,
+    );
     return {
       message: `Nhập thành công ${orders.length} đơn hàng!`,
       data: orders,
