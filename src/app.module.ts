@@ -48,6 +48,7 @@ import { OrderIncident } from './incidents/incident.entity';
 import { WalletsModule } from './wallets/wallets.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { Notification } from './notifications/notification.entity';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 
 @Module({
   imports: [
@@ -104,6 +105,7 @@ import { Notification } from './notifications/notification.entity';
     WalletsModule,
     ScheduleModule.forRoot(),
     NotificationsModule,
+    EventEmitterModule.forRoot(),
   ],
   controllers: [],
   providers: [

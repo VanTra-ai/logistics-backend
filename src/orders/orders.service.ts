@@ -3,8 +3,9 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, DataSource } from 'typeorm';
+import { Repository, In, DataSource, FindOptionsWhere } from 'typeorm';
 import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
 import { Hub } from '../hubs/hub.entity';
@@ -283,6 +284,7 @@ export class OrdersService {
     private trackingsService: TrackingsService,
     private financeService: FinanceService,
     private dataSource: DataSource,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   private generateTrackingNumber(): string {
@@ -355,7 +357,7 @@ export class OrdersService {
     const savedOrder = await this.ordersRepository.save(newOrder);
 
     // Tự động ghi lại lịch sử mốc đầu tiên
-    await this.trackingsService.addTrackingRecord({
+    await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
       status: 'PENDING',
       note: 'Đơn hàng được tạo mới và chờ lấy hàng',
@@ -406,7 +408,8 @@ export class OrdersService {
         : `Trạng thái đơn hàng cập nhật thành ${data.status}`;
 
       // Tự động ghi lịch sử
-      await this.trackingsService.addTrackingRecordWithManager(manager, {
+      await this.eventEmitter.emitAsync('order.status.changed', {
+        manager,
         order: updatedOrder,
         status: data.status,
         note: trackingNote,
@@ -419,8 +422,17 @@ export class OrdersService {
     });
   }
 
-  async findAllOrders(): Promise<Order[]> {
+  async findAllOrders(user?: {
+    role: string;
+    hubId?: string;
+  }): Promise<Order[]> {
+    const where: FindOptionsWhere<Order> = {};
+    if (user?.role === 'HUB_COORDINATOR' && user.hubId) {
+      where.pickup_hub = { id: user.hubId };
+    }
+
     return await this.ordersRepository.find({
+      where,
       order: { created_at: 'DESC' },
       relations: {
         pickup_hub: true,
@@ -467,7 +479,10 @@ export class OrdersService {
     reason: string,
     cancelledBy: 'CUSTOMER' | 'SHIPPER' | 'ADMIN',
   ): Promise<Order> {
-    const order = await this.ordersRepository.findOne({ where: { id } });
+    const order = await this.ordersRepository.findOne({
+      where: { id },
+      relations: { shipment: true },
+    });
 
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
@@ -484,6 +499,12 @@ export class OrdersService {
     if (cancelledBy === 'SHIPPER' && order.current_status !== 'DELIVERING') {
       throw new BadRequestException(
         'Shipper chỉ được hủy đơn khi đang DELIVERING!',
+      );
+    }
+
+    if (order.shipment && order.shipment.status === 'IN_TRANSIT') {
+      throw new BadRequestException(
+        'Không thể hủy đơn hàng đang được vận chuyển trên chuyến xe (IN_TRANSIT)!',
       );
     }
 
@@ -506,7 +527,7 @@ export class OrdersService {
     else if (cancelledBy === 'SHIPPER') actor = 'Shipper';
     else if (cancelledBy === 'ADMIN') actor = 'Quản trị viên';
 
-    await this.trackingsService.addTrackingRecord({
+    await this.eventEmitter.emitAsync('order.status.changed', {
       order: order,
       status: 'CANCELLED',
       note: `Đơn hàng đã bị hủy bởi ${actor}. Lý do: ${reason}`,
@@ -533,7 +554,11 @@ export class OrdersService {
     });
   }
 
-  async assignShipper(orderId: string, shipperId: string): Promise<Order> {
+  async assignShipper(
+    orderId: string,
+    shipperId: string,
+    currentUser?: { role: string; hubId?: string },
+  ): Promise<Order> {
     // Trạm 1: Kiểm tra đơn hàng
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
@@ -545,6 +570,14 @@ export class OrdersService {
       throw new BadRequestException(
         'Chỉ có thể điều phối đơn hàng đang ở trạng thái PENDING!',
       );
+    }
+
+    if (currentUser?.role === 'HUB_COORDINATOR') {
+      if (!order.pickup_hub || order.pickup_hub.id !== currentUser.hubId) {
+        throw new BadRequestException(
+          'Điều phối viên chỉ được gán Shipper cho đơn hàng thuộc bưu cục của mình!',
+        );
+      }
     }
 
     // Trạm 2: Kiểm tra Shipper
@@ -580,7 +613,7 @@ export class OrdersService {
     const savedOrder = await this.ordersRepository.save(order);
 
     // Ghi log hành trình
-    await this.trackingsService.addTrackingRecord({
+    await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
       status: 'PICKING',
       note: `Đơn hàng đã được phân công cho Shipper: ${shipper.full_name}`,
@@ -659,7 +692,8 @@ export class OrdersService {
       // 4. Ghi log tracking đồng loạt bằng Promise.all
       await Promise.all(
         validOrders.map((order) =>
-          this.trackingsService.addTrackingRecordWithManager(manager, {
+          this.eventEmitter.emitAsync('order.status.changed', {
+            manager,
             order: order,
             status: 'AT_HUB',
             note: `Đơn hàng đã được nhập kho bởi ${actorName}`,
@@ -758,7 +792,8 @@ export class OrdersService {
       // 5. Ghi log hành trình đồng loạt
       await Promise.all(
         validOrders.map((order) =>
-          this.trackingsService.addTrackingRecordWithManager(manager, {
+          this.eventEmitter.emitAsync('order.status.changed', {
+            manager,
             order: order,
             status: 'DELIVERING',
             note: `Đơn hàng đã xuất kho. Bàn giao cho Shipper: ${shipper.full_name} (${shipper.phone_number}). Thao tác bởi: ${actorName}`,
@@ -975,7 +1010,7 @@ export class OrdersService {
     const savedOrder = await this.ordersRepository.save(order);
 
     // 4. Ghi log hành trình
-    await this.trackingsService.addTrackingRecord({
+    await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
       status: 'RETURNING',
       note: `Giao hàng thất bại. Đang chuyển hoàn về bưu cục. Lý do: ${data.reason}`,
@@ -1016,7 +1051,7 @@ export class OrdersService {
 
     const savedOrder = await this.ordersRepository.save(order);
 
-    await this.trackingsService.addTrackingRecord({
+    await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
       status: 'DELIVERING',
       note:
@@ -1051,7 +1086,7 @@ export class OrdersService {
 
     // Ghi log
     const noteReason = data.reason ? ` Lý do: ${data.reason}` : '';
-    await this.trackingsService.addTrackingRecord({
+    await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
       status: 'RETURNED_TO_SENDER',
       note: `Đơn hàng xuất kho, chuyển hoàn về cho người gửi.${noteReason} Thao tác bởi: ${actorName}`,

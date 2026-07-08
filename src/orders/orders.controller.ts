@@ -126,8 +126,10 @@ export class OrdersController {
   }
 
   @Get()
-  async getAllOrders() {
-    const orders = await this.ordersService.findAllOrders();
+  async getAllOrders(
+    @Request() req: { user: { userId: string; role: string; hubId?: string } },
+  ) {
+    const orders = await this.ordersService.findAllOrders(req.user);
     return {
       message: 'Lấy danh sách đơn hàng thành công!',
       data: orders,
@@ -151,6 +153,8 @@ export class OrdersController {
   }
 
   @Patch(':id/status')
+  @Roles('ADMIN')
+  @UseGuards(RolesGuard)
   async updateStatus(
     @Param('id') id: string,
     @Body() updateOrderStatusDto: UpdateOrderStatusDto,
@@ -222,10 +226,12 @@ export class OrdersController {
   async assignShipper(
     @Param('id') id: string,
     @Body() assignShipperDto: AssignShipperDto,
+    @Request() req: { user: { role: string; hubId?: string } },
   ) {
     const order = await this.ordersService.assignShipper(
       id,
       assignShipperDto.shipper_id,
+      req.user,
     );
     return {
       message: 'Điều phối Shipper thành công!',

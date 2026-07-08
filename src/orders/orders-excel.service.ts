@@ -3,9 +3,14 @@ import { DataSource } from 'typeorm';
 import * as exceljs from 'exceljs';
 import { Order } from './order.entity';
 import { User } from '../users/user.entity';
+import { FinanceService } from '../finance/finance.service';
+
 @Injectable()
 export class OrdersExcelService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly financeService: FinanceService,
+  ) {}
 
   /**
    * Import đơn hàng từ file Excel/CSV.
@@ -28,7 +33,8 @@ export class OrdersExcelService {
       );
     }
 
-    const rowErrors: string[] = [];
+    const tariff = await this.financeService.getTariff();
+    const rowErrors: { row: number; errors: string[] }[] = [];
     const ordersToCreate: Partial<Order>[] = [];
 
     // Header được giả định nằm ở dòng 1.
@@ -59,12 +65,13 @@ export class OrdersExcelService {
 
       const weight = weightStr ? parseFloat(weightStr) : 0;
       const cod_amount = codStr ? parseFloat(codStr) : 0;
+      const distance = 5;
 
       if (isNaN(weight)) rowErrorDetails.push('Khối lượng không hợp lệ');
       if (isNaN(cod_amount)) rowErrorDetails.push('COD không hợp lệ');
 
       if (rowErrorDetails.length > 0) {
-        rowErrors.push(`Dòng ${rowNumber}: ${rowErrorDetails.join(', ')}`);
+        rowErrors.push({ row: rowNumber, errors: rowErrorDetails });
       } else {
         ordersToCreate.push({
           tracking_number,
@@ -76,6 +83,15 @@ export class OrdersExcelService {
           receiver_address,
           weight,
           cod_amount,
+          shipping_fee:
+            Number(tariff.base_price_distance) +
+            Math.max(0, distance - Number(tariff.base_distance_limit)) *
+              Number(tariff.block_price_distance) +
+            Math.max(0, weight - 2) * 5000,
+          cod_fee:
+            cod_amount > 0
+              ? (cod_amount * Number(tariff.cod_fee_percent)) / 100
+              : 0,
           current_status: 'PENDING',
           cod_status: 'PENDING',
         });
@@ -151,7 +167,8 @@ export class OrdersExcelService {
       );
     }
 
-    const rowErrors: string[] = [];
+    const tariff = await this.financeService.getTariff();
+    const rowErrors: { row: number; errors: string[] }[] = [];
     const ordersToCreate: Partial<Order>[] = [];
 
     worksheet.eachRow((row, rowNumber) => {
@@ -180,12 +197,13 @@ export class OrdersExcelService {
 
       const weight = weightStr ? parseFloat(weightStr) : 0;
       const cod_amount = codStr ? parseFloat(codStr) : 0;
+      const distance = 5;
 
       if (isNaN(weight)) rowErrorDetails.push('Khối lượng không hợp lệ');
       if (isNaN(cod_amount)) rowErrorDetails.push('COD không hợp lệ');
 
       if (rowErrorDetails.length > 0) {
-        rowErrors.push(`Dòng ${rowNumber}: ${rowErrorDetails.join(', ')}`);
+        rowErrors.push({ row: rowNumber, errors: rowErrorDetails });
       } else {
         ordersToCreate.push({
           tracking_number,
@@ -197,6 +215,15 @@ export class OrdersExcelService {
           receiver_address,
           weight,
           cod_amount,
+          shipping_fee:
+            Number(tariff.base_price_distance) +
+            Math.max(0, distance - Number(tariff.base_distance_limit)) *
+              Number(tariff.block_price_distance) +
+            Math.max(0, weight - 2) * 5000,
+          cod_fee:
+            cod_amount > 0
+              ? (cod_amount * Number(tariff.cod_fee_percent)) / 100
+              : 0,
           current_status: 'PENDING',
           cod_status: 'PENDING',
           customer,

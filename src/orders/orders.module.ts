@@ -13,6 +13,7 @@ import { Transaction } from '../wallets/transaction.entity';
 import { HubsModule } from '../hubs/hubs.module';
 import { TrackingsModule } from '../trackings/trackings.module';
 import { FinanceModule } from '../finance/finance.module';
+import { OrdersListener } from './orders.listener';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { FinanceModule } from '../finance/finance.module';
     TrackingsModule,
     FinanceModule,
   ],
-  providers: [OrdersService, LabelService, OrdersExcelService],
+  providers: [OrdersService, LabelService, OrdersExcelService, OrdersListener],
   controllers: [
     OrdersController, // API cho Admin/Shipper
     OrdersPublicController, // API cho khách tra cứu
