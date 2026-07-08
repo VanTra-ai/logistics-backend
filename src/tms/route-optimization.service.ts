@@ -33,40 +33,28 @@ export class RouteOptimizationService {
     return R * c; // Distance in km
   }
 
-  async optimizeRoute(shipmentId: string): Promise<void> {
-    const shipment = await this.shipmentRepo.findOne({
-      where: { id: shipmentId },
-      relations: { orders: true, shipper: true },
-    });
-
-    if (!shipment || !shipment.orders || shipment.orders.length === 0) {
-      return;
-    }
-
-    const orders = shipment.orders.filter(
-      (o) => o.latitude != null && o.longitude != null,
-    );
-    if (orders.length === 0) return;
-
-    let currentLat = shipment.shipper?.current_latitude;
-    let currentLon = shipment.shipper?.current_longitude;
-
-    if (currentLat == null || currentLon == null) {
-      // Fallback to first order if shipper location is missing
-      currentLat = orders[0].latitude;
-      currentLon = orders[0].longitude;
-    }
+  // For Virtual Dispatch: Sorts a list of orders based on nearest neighbor
+  optimizeOrderList(
+    orders: Order[],
+    startLat: number,
+    startLon: number,
+  ): Order[] {
+    if (orders.length === 0) return [];
 
     const unvisited = [...orders];
+    const optimized: Order[] = [];
     let sequence = 1;
+    let currentLat = startLat;
+    let currentLon = startLon;
 
     while (unvisited.length > 0) {
-      // Find nearest neighbor
       let nearestIdx = 0;
       let minDistance = Infinity;
 
       for (let i = 0; i < unvisited.length; i++) {
         const order = unvisited[i];
+        if (order.latitude == null || order.longitude == null) continue;
+
         const distance = this.getDistance(
           currentLat,
           currentLon,
@@ -80,16 +68,49 @@ export class RouteOptimizationService {
       }
 
       const nearestOrder = unvisited[nearestIdx];
-
-      // Update DB directly
       nearestOrder.delivery_sequence = sequence++;
-      await this.orderRepo.update(nearestOrder.id, {
-        delivery_sequence: nearestOrder.delivery_sequence,
-      });
 
+      optimized.push(nearestOrder);
       currentLat = nearestOrder.latitude;
       currentLon = nearestOrder.longitude;
       unvisited.splice(nearestIdx, 1);
+    }
+
+    return optimized;
+  }
+
+  async optimizeRoute(shipmentId: string): Promise<void> {
+    const shipment = await this.shipmentRepo.findOne({
+      where: { id: shipmentId },
+      relations: { orders: true, shipper: true },
+    });
+
+    if (!shipment || !shipment.orders || shipment.orders.length === 0) {
+      return;
+    }
+
+    const ordersWithLoc = shipment.orders.filter(
+      (o) => o.latitude != null && o.longitude != null,
+    );
+    if (ordersWithLoc.length === 0) return;
+
+    let currentLat = shipment.shipper?.current_latitude;
+    let currentLon = shipment.shipper?.current_longitude;
+
+    if (currentLat == null || currentLon == null) {
+      currentLat = ordersWithLoc[0].latitude;
+      currentLon = ordersWithLoc[0].longitude;
+    }
+
+    const optimizedOrders = this.optimizeOrderList(
+      ordersWithLoc,
+      currentLat,
+      currentLon,
+    );
+
+    // Save all optimized orders in one go to avoid N+1 queries
+    if (optimizedOrders.length > 0) {
+      await this.orderRepo.save(optimizedOrders);
     }
   }
 }

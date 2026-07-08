@@ -53,15 +53,17 @@ export class TicketsController {
   }
 
   @Patch(':id/resolve')
-  @Roles('ADMIN') // CHỈ ADMIN MỚI CÓ QUYỀN PHẢN HỒI
+  @Roles('ADMIN', 'HUB_COORDINATOR') // CHỈ ADMIN MỚI CÓ QUYỀN PHẢN HỒI
   @UseGuards(RolesGuard)
   async resolveTicket(
     @Param('id') id: string,
     @Body() resolveTicketDto: ResolveTicketDto,
+    @Request() req: { user: { userId: string; role?: string; hubId?: string } },
   ) {
     const updatedTicket = await this.ticketsService.resolveTicket(
       id,
       resolveTicketDto,
+      req.user,
     );
 
     return {

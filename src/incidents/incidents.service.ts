@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { OrderIncident } from './incident.entity';
 import { Order } from '../orders/order.entity';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from '../users/user.entity';
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { ResolveIncidentDto, ResolveAction } from './dto/resolve-incident.dto';
@@ -17,6 +22,7 @@ export class IncidentsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly dataSource: DataSource,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(createIncidentDto: CreateIncidentDto, proof_image_url?: string) {
@@ -29,11 +35,15 @@ export class IncidentsService {
       throw new NotFoundException(`Order with ID ${orderId} not found`);
     }
 
-    const shipper = await this.userRepository.findOne({
-      where: { id: shipperId },
-    });
-    if (!shipper) {
-      throw new NotFoundException(`Shipper with ID ${shipperId} not found`);
+    let shipper: User | null = null;
+    if (shipperId) {
+      const foundShipper = await this.userRepository.findOne({
+        where: { id: shipperId },
+      });
+      if (!foundShipper) {
+        throw new NotFoundException(`Shipper with ID ${shipperId} not found`);
+      }
+      shipper = foundShipper;
     }
 
     // Update order status to FAILED
@@ -62,7 +72,11 @@ export class IncidentsService {
     });
   }
 
-  async resolve(id: string, resolveDto: ResolveIncidentDto) {
+  async resolve(
+    id: string,
+    resolveDto: ResolveIncidentDto,
+    currentUser: { userId: string; role?: string; hubId?: string },
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -71,7 +85,9 @@ export class IncidentsService {
       const incident = await queryRunner.manager.findOne(OrderIncident, {
         where: { id },
         relations: {
-          order: true,
+          order: {
+            pickup_hub: true,
+          },
         },
       });
 
@@ -91,6 +107,15 @@ export class IncidentsService {
 
       const order = incident.order;
 
+      if (
+        currentUser?.role === 'HUB_COORDINATOR' &&
+        order.pickup_hub?.id !== currentUser?.hubId
+      ) {
+        throw new ForbiddenException(
+          'Bạn chỉ có quyền duyệt sự cố cho đơn hàng thuộc bưu cục của mình!',
+        );
+      }
+
       // The action can be REDELIVERY (set Order current_status to AT_HUB), RETURN (set to RETURN_TO_SENDER), COMPENSATION (set to DAMAGED_DESTROYED). Update Incident status to RESOLVED_REDELIVERY etc.
       if (resolveDto.action === ResolveAction.REDELIVERY) {
         order.current_status = 'AT_HUB';
@@ -101,6 +126,9 @@ export class IncidentsService {
       } else if (resolveDto.action === ResolveAction.COMPENSATION) {
         order.current_status = 'DAMAGED_DESTROYED';
         incident.status = 'RESOLVED_COMPENSATION';
+      } else if (resolveDto.action === ResolveAction.REJECT) {
+        order.current_status = 'IN_TRANSIT';
+        incident.status = 'REJECTED';
       }
 
       incident.resolvedBy = resolvedBy;
@@ -110,6 +138,26 @@ export class IncidentsService {
 
       await queryRunner.manager.save(order);
       const updatedIncident = await queryRunner.manager.save(incident);
+
+      // Emit event using the transaction manager so the tracking record is saved within the transaction
+      let eventStatusNote = '';
+      if (resolveDto.action === ResolveAction.REDELIVERY) {
+        eventStatusNote = `Sự cố đã được duyệt giao lại. Cập nhật thành: Lưu kho. ${resolveDto.resolution_notes || ''}`;
+      } else if (resolveDto.action === ResolveAction.RETURN) {
+        eventStatusNote = `Sự cố hoàn hàng đã duyệt. ${resolveDto.resolution_notes || ''}`;
+      } else if (resolveDto.action === ResolveAction.COMPENSATION) {
+        eventStatusNote = `Sự cố đền bù đã duyệt. ${resolveDto.resolution_notes || ''}`;
+      } else if (resolveDto.action === ResolveAction.REJECT) {
+        eventStatusNote = `Báo cáo sự cố bị từ chối. Đơn hàng tiếp tục hành trình. ${resolveDto.resolution_notes || ''}`;
+      }
+
+      this.eventEmitter.emit('order.status.changed', {
+        order,
+        userId: resolvedBy.id,
+        newStatus: order.current_status,
+        note: eventStatusNote,
+        manager: queryRunner.manager,
+      });
 
       await queryRunner.commitTransaction();
       return updatedIncident;

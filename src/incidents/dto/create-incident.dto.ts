@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsUUID, IsOptional } from 'class-validator';
 
 export class CreateIncidentDto {
   @IsUUID()
@@ -6,8 +6,8 @@ export class CreateIncidentDto {
   orderId!: string;
 
   @IsUUID()
-  @IsNotEmpty()
-  shipperId!: string;
+  @IsOptional()
+  shipperId?: string;
 
   @IsString()
   @IsNotEmpty()

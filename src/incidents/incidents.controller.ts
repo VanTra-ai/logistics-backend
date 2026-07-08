@@ -7,7 +7,12 @@ import {
   Param,
   UseInterceptors,
   UploadedFile,
+  UseGuards,
+  Request,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { IncidentsService } from './incidents.service';
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { ResolveIncidentDto } from './dto/resolve-incident.dto';
@@ -16,6 +21,7 @@ import { diskStorage } from 'multer';
 import { extname } from 'path';
 
 @Controller('incidents')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class IncidentsController {
   constructor(private readonly incidentsService: IncidentsService) {}
 
@@ -50,7 +56,12 @@ export class IncidentsController {
   }
 
   @Patch(':id/resolve')
-  resolve(@Param('id') id: string, @Body() resolveDto: ResolveIncidentDto) {
-    return this.incidentsService.resolve(id, resolveDto);
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  resolve(
+    @Param('id') id: string,
+    @Body() resolveDto: ResolveIncidentDto,
+    @Request() req: { user: { userId: string; role?: string; hubId?: string } },
+  ) {
+    return this.incidentsService.resolve(id, resolveDto, req.user);
   }
 }

@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ticket } from './ticket.entity';
 import { Order } from '../orders/order.entity';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 import {
   IsNotEmpty,
   IsString,
@@ -56,6 +61,8 @@ export class TicketsService {
 
     @InjectRepository(Order) // Cần để validate mã đơn hàng nếu có
     private ordersRepository: Repository<Order>,
+
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
 
   async createTicket(userId: string, data: CreateTicketDto): Promise<Ticket> {
@@ -102,15 +109,30 @@ export class TicketsService {
   async resolveTicket(
     ticketId: string,
     data: ResolveTicketDto,
+    currentUser: { userId: string; role?: string; hubId?: string },
   ): Promise<Ticket> {
     // 1. Tìm ticket trong CSDL
     const ticket = await this.ticketsRepository.findOne({
       where: { id: ticketId },
-      relations: { order: true, customer: true }, // Load thêm thông tin để hiển thị đầy đủ sau khi update
+      relations: {
+        order: {
+          pickup_hub: true,
+        },
+        customer: true,
+      }, // Load thêm thông tin để hiển thị đầy đủ sau khi update
     });
 
     if (!ticket) {
       throw new NotFoundException('Không tìm thấy yêu cầu khiếu nại!');
+    }
+
+    if (
+      currentUser?.role === 'HUB_COORDINATOR' &&
+      ticket.order?.pickup_hub?.id !== currentUser?.hubId
+    ) {
+      throw new ForbiddenException(
+        'Bạn chỉ có quyền giải quyết khiếu nại cho đơn hàng thuộc bưu cục của mình!',
+      );
     }
 
     // 2. Cập nhật thông tin phản hồi và trạng thái
@@ -118,6 +140,17 @@ export class TicketsService {
     ticket.status = data.status || 'RESOLVED'; // Nếu không truyền status lên thì mặc định là RESOLVED
 
     // 3. Lưu lại vào Database
-    return await this.ticketsRepository.save(ticket);
+    const savedTicket = await this.ticketsRepository.save(ticket);
+
+    // 4. Bắn Notification cho khách hàng
+    if (ticket.customer) {
+      this.notificationsGateway.sendNotificationToUser(ticket.customer.id, {
+        title: 'Khiếu nại của bạn đã được phản hồi',
+        message: `Quản trị viên đã phản hồi khiếu nại liên quan đến đơn hàng ${ticket.order?.tracking_number || ''}`,
+        ticketId: ticket.id,
+      });
+    }
+
+    return savedTicket;
   }
 }

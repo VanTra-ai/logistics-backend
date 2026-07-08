@@ -17,8 +17,8 @@ export class OrderIncident {
   @ManyToOne(() => Order, { eager: true })
   order!: Order;
 
-  @ManyToOne(() => User, { eager: true })
-  shipper!: User;
+  @ManyToOne(() => User, { eager: true, nullable: true })
+  shipper!: User | null;
 
   @Column()
   reason!: string;

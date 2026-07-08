@@ -10,6 +10,7 @@ export enum ResolveAction {
   REDELIVERY = 'REDELIVERY',
   RETURN = 'RETURN',
   COMPENSATION = 'COMPENSATION',
+  REJECT = 'REJECT',
 }
 
 export class ResolveIncidentDto {

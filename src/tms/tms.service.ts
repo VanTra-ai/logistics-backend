@@ -1,9 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DataSource, IsNull, Not } from 'typeorm';
+import { DataSource, IsNull, Not, In } from 'typeorm';
 import { RouteOptimizationService } from './route-optimization.service';
 import { User } from '../users/user.entity';
 import { Order } from '../orders/order.entity';
 import { Shipment } from '../shipments/shipment.entity';
+
+export class ConfirmDispatchDto {
+  virtualShipments!: {
+    shipperId: string;
+    orders: {
+      id: string;
+      delivery_sequence: number;
+    }[];
+  }[];
+}
 
 @Injectable()
 export class TmsService {
@@ -37,9 +47,9 @@ export class TmsService {
   async autoDispatch() {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
-    await queryRunner.startTransaction();
+    // Khong startTransaction vi day la virtual dispatch
 
-    const newShipmentsIds: string[] = [];
+    const virtualShipments: any[] = [];
 
     try {
       // 1. Find all shippers (role = SHIPPER) with current location
@@ -58,7 +68,6 @@ export class TmsService {
         .getMany();
 
       if (availableShippers.length === 0) {
-        await queryRunner.rollbackTransaction();
         return { message: 'Không có tài xế nào rảnh' };
       }
 
@@ -73,7 +82,6 @@ export class TmsService {
       });
 
       if (pendingOrders.length === 0) {
-        await queryRunner.rollbackTransaction();
         return { message: 'Không có đơn hàng nào cần điều phối' };
       }
 
@@ -123,39 +131,91 @@ export class TmsService {
         unassignedOrders = remainingForOthers;
 
         if (assignedOrdersToShipper.length > 0) {
-          const shipment = queryRunner.manager.create(Shipment, {
-            shipper: shipper,
-            capacity_weight: maxCapacity,
-            status: 'IN_TRANSIT',
-          });
-          const savedShipment = await queryRunner.manager.save(shipment);
+          const optimizedOrders =
+            this.routeOptimizationService.optimizeOrderList(
+              assignedOrdersToShipper,
+              shipper.current_latitude!,
+              shipper.current_longitude!,
+            );
 
-          assignedOrdersToShipper.forEach((order) => {
-            order.shipment = savedShipment;
+          virtualShipments.push({
+            shipperId: shipper.id,
+            shipperName: shipper.full_name,
+            orders: optimizedOrders.map((o) => ({
+              id: o.id,
+              tracking_number: o.tracking_number,
+              delivery_sequence: o.delivery_sequence,
+              latitude: o.latitude,
+              longitude: o.longitude,
+              customer_name: o.receiver_name,
+              recipient_address: o.receiver_address,
+            })),
           });
-          await queryRunner.manager.save(Order, assignedOrdersToShipper);
-
-          newShipmentsIds.push(savedShipment.id);
         }
       }
-
-      await queryRunner.commitTransaction();
     } catch (error) {
-      this.logger.error('Error in autoDispatch transaction', error);
-      await queryRunner.rollbackTransaction();
+      this.logger.error('Error in autoDispatch', error);
       throw error;
     } finally {
       await queryRunner.release();
     }
 
-    // 4. Call optimizeRoute for each shipment
-    for (const shipmentId of newShipmentsIds) {
-      await this.routeOptimizationService.optimizeRoute(shipmentId);
-    }
-
     return {
-      message: 'Điều phối tự động thành công',
-      dispatchedShipments: newShipmentsIds.length,
+      message: 'Gợi ý điều phối ảo thành công',
+      virtualShipments,
     };
+  }
+
+  async confirmDispatch(data: ConfirmDispatchDto) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const { virtualShipments } = data;
+      let dispatchedShipments = 0;
+
+      for (const vs of virtualShipments) {
+        const shipper = await queryRunner.manager.findOne(User, {
+          where: { id: vs.shipperId },
+        });
+        if (!shipper) continue;
+
+        const shipment = queryRunner.manager.create(Shipment, {
+          shipper: shipper,
+          capacity_weight: 1000,
+          status: 'IN_TRANSIT',
+        });
+        const savedShipment = await queryRunner.manager.save(shipment);
+
+        const orderIds = vs.orders.map((o) => o.id);
+        const orders = await queryRunner.manager.findBy(Order, {
+          id: In(orderIds),
+        });
+
+        orders.forEach((order) => {
+          order.shipment = savedShipment;
+          const vo = vs.orders.find((o) => o.id === order.id);
+          if (vo) {
+            order.delivery_sequence = vo.delivery_sequence;
+          }
+        });
+
+        await queryRunner.manager.save(Order, orders);
+        dispatchedShipments++;
+      }
+
+      await queryRunner.commitTransaction();
+      return {
+        message: 'Xác nhận điều phối thành công',
+        dispatchedShipments,
+      };
+    } catch (error) {
+      this.logger.error('Error in confirmDispatch', error);
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }
