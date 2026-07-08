@@ -6,6 +6,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import * as jwt from 'jsonwebtoken';
+import { ConfigService } from '@nestjs/config';
 
 @WebSocketGateway({ cors: true })
 export class NotificationsGateway
@@ -14,8 +15,7 @@ export class NotificationsGateway
   @WebSocketServer()
   server!: Server;
 
-  // Map userId -> socketId
-  private connectedUsers = new Map<string, string>();
+  constructor(private configService: ConfigService) {}
 
   handleConnection(client: Socket) {
     try {
@@ -26,9 +26,8 @@ export class NotificationsGateway
         return;
       }
 
-      // Giải mã token (giả sử secret key là process.env.JWT_SECRET hoặc default)
-      // Lưu ý: Cần import config hoặc dùng secret tương ứng
-      const secret = process.env.JWT_SECRET || 'SECRET_KEY';
+      const secret =
+        this.configService.get<string>('JWT_SECRET') || 'SECRET_KEY';
       const decoded = jwt.verify(
         String(token).replace('Bearer ', ''),
         secret,
@@ -37,7 +36,7 @@ export class NotificationsGateway
       };
 
       if (decoded && decoded.userId) {
-        this.connectedUsers.set(decoded.userId, client.id);
+        void client.join(decoded.userId); // Join room by userId for multi-device support
       } else {
         client.disconnect();
       }
@@ -46,21 +45,11 @@ export class NotificationsGateway
     }
   }
 
-  handleDisconnect(client: Socket) {
-    // Xóa user khỏi map khi ngắt kết nối
-    for (const [userId, socketId] of this.connectedUsers.entries()) {
-      if (socketId === client.id) {
-        this.connectedUsers.delete(userId);
-        break;
-      }
-    }
+  handleDisconnect() {
+    // Socket.io automatically handles room leave on disconnect. No manual action needed.
   }
 
-  // Phương thức để gửi notification
   sendNotificationToUser(userId: string, notification: any) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('new_notification', notification);
-    }
+    this.server.to(userId).emit('new_notification', notification);
   }
 }

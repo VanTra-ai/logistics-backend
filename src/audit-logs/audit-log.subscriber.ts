@@ -21,6 +21,40 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     dataSource.subscribers.push(this);
   }
 
+  private stripSensitiveData(obj: any): any {
+    if (!obj || typeof obj !== 'object') return obj;
+    const result = { ...obj };
+    const sensitiveKeys = [
+      'password_hash',
+      'refresh_token',
+      'token',
+      'password',
+    ];
+    for (const key of sensitiveKeys) {
+      if (key in result) {
+        delete result[key];
+      }
+    }
+    return result;
+  }
+
+  private extractDiff(oldObj: any, newObj: any) {
+    const diffOld: any = {};
+    const diffNew: any = {};
+    const keys = new Set([
+      ...Object.keys((oldObj as Record<string, unknown>) || {}),
+      ...Object.keys((newObj as Record<string, unknown>) || {}),
+    ]);
+
+    for (const key of keys) {
+      if (oldObj?.[key] !== newObj?.[key]) {
+        diffOld[key] = oldObj?.[key];
+        diffNew[key] = newObj?.[key];
+      }
+    }
+    return { diffOld, diffNew };
+  }
+
   afterInsert(event: InsertEvent<any>) {
     if (!event.entity || event.metadata.targetName === 'AuditLog') return;
 
@@ -32,7 +66,7 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     auditLog.action = 'INSERT';
     auditLog.entityName = event.metadata.tableName;
     auditLog.entityId = entityId;
-    auditLog.newValues = event.entity;
+    auditLog.newValues = this.stripSensitiveData(event.entity);
 
     if (
       auditLog.entityName === 'order_materials' ||
@@ -55,19 +89,23 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     const userId = this.cls.isActive() ? this.cls.get('userId') : null;
     const entityId = event.entity.id ? String(event.entity.id) : '';
 
+    const { diffOld, diffNew } = this.extractDiff(
+      event.databaseEntity,
+      event.entity,
+    );
+
     const auditLog = new AuditLog();
     auditLog.userId = userId || null;
     auditLog.action = 'UPDATE';
     auditLog.entityName = event.metadata.tableName;
     auditLog.entityId = entityId;
-    auditLog.oldValues = event.databaseEntity;
-    auditLog.newValues = event.entity;
+    auditLog.oldValues = this.stripSensitiveData(diffOld);
+    auditLog.newValues = this.stripSensitiveData(diffNew);
 
     if (
       auditLog.entityName === 'orders' ||
       event.metadata.targetName === 'Order'
     ) {
-      // location might be a relation or a column
       const oldLocationId =
         event.databaseEntity?.location?.id ?? event.databaseEntity?.locationId;
       const newLocationId =
@@ -105,7 +143,7 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     auditLog.action = 'DELETE';
     auditLog.entityName = event.metadata.tableName;
     auditLog.entityId = entityId;
-    auditLog.oldValues = event.entity;
+    auditLog.oldValues = this.stripSensitiveData(event.entity);
 
     event.manager
       .getRepository(AuditLog)

@@ -1,7 +1,12 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { AuditLogsService } from './audit-logs.service';
 
 @Controller('audit-logs')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles('ADMIN')
 export class AuditLogsController {
   constructor(private readonly auditLogsService: AuditLogsService) {}
 

@@ -23,13 +23,28 @@ export class ReportsService {
     private readonly dailyStatsRepo: Repository<DailyStats>,
   ) {}
 
-  async getPnl() {
-    const { sum_shipping, sum_material } =
-      (await this.orderRepo
-        .createQueryBuilder('order')
-        .select('SUM(order.shipping_fee)', 'sum_shipping')
-        .addSelect('SUM(order.material_fee)', 'sum_material')
-        .getRawOne()) || {};
+  async getPnl(startDate?: string, endDate?: string) {
+    const qb = this.orderRepo
+      .createQueryBuilder('order')
+      .select('SUM(order.shipping_fee)', 'sum_shipping')
+      .addSelect('SUM(order.material_fee)', 'sum_material');
+
+    if (startDate) {
+      qb.andWhere('order.created_at >= :startDate', { startDate });
+    } else {
+      // Default to last 30 days if not provided
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      qb.andWhere('order.created_at >= :startDate', {
+        startDate: thirtyDaysAgo,
+      });
+    }
+
+    if (endDate) {
+      qb.andWhere('order.created_at <= :endDate', { endDate });
+    }
+
+    const { sum_shipping, sum_material } = (await qb.getRawOne()) || {};
 
     const total_revenue = parseFloat(String(sum_shipping ?? '0'));
     const total_costs = parseFloat(String(sum_material ?? '0'));

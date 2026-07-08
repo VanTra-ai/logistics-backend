@@ -59,4 +59,11 @@ export class NotificationsService {
 
     return null;
   }
+
+  async markAllRead(userId: string) {
+    await this.notificationRepository.update(
+      { user: { id: userId }, isRead: false },
+      { isRead: true },
+    );
+  }
 }

@@ -25,6 +25,14 @@ export class NotificationsController {
     };
   }
 
+  @Patch('mark-all-read')
+  async markAllRead(@Request() req: { user: { userId: string } }) {
+    await this.notificationsService.markAllRead(req.user.userId);
+    return {
+      message: 'Đã đánh dấu tất cả thông báo là đã đọc!',
+    };
+  }
+
   @Patch(':id/read')
   async markAsRead(
     @Param('id') id: string,
