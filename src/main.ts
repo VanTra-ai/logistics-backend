@@ -1,7 +1,7 @@
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe } from '@nestjs/common';
+import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import * as express from 'express';
 import { join } from 'path';
 import * as fs from 'fs';
@@ -24,6 +24,7 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true, // Tự động loại bỏ các trường không có trong DTO
@@ -31,6 +32,9 @@ async function bootstrap() {
       transform: true, // Tự động chuyển đổi kiểu dữ liệu (vd: string sang number)
     }),
   );
+
+  // Áp dụng ClassSerializerInterceptor global để bảo vệ dữ liệu nhạy cảm
+  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
 
   app.enableCors();
 

@@ -45,15 +45,17 @@ export class HubsService {
     private shipmentsRepository: Repository<Shipment>,
   ) {}
 
-  private async generateHubCode(): Promise<string> {
-    const count = await this.hubsRepository.count();
-    const sequence = (count + 1).toString().padStart(3, '0');
-    return `HUB${sequence}`;
+  private generateHubCode(): string {
+    const timestamp = Date.now().toString().slice(-6);
+    const random = Math.floor(Math.random() * 100)
+      .toString()
+      .padStart(2, '0');
+    return `HUB${timestamp}${random}`;
   }
 
   // Hàm tạo bưu cục mới
   async createHub(data: CreateHubDto): Promise<Hub> {
-    const hubCode = await this.generateHubCode();
+    const hubCode = this.generateHubCode();
     const newHub = this.hubsRepository.create({
       ...data,
       hub_code: hubCode,

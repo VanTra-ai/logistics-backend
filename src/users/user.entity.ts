@@ -1,3 +1,4 @@
+import { Exclude } from 'class-transformer';
 import {
   Entity,
   Column,
@@ -32,6 +33,7 @@ export class User {
   current_longitude!: number | null;
 
   @Column()
+  @Exclude()
   password_hash!: string;
 
   @Column()
@@ -44,6 +46,7 @@ export class User {
   role!: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR' | 'CUSTOMER';
 
   @Column({ type: 'varchar', nullable: true })
+  @Exclude()
   refresh_token!: string | null;
 
   @Column({ nullable: true })

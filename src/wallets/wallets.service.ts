@@ -22,6 +22,19 @@ export class WalletsService {
     });
   }
 
+  async findMyWallet(userId: string) {
+    const wallet = await this.walletsRepository.findOne({
+      where: { user: { id: userId } },
+      relations: { user: true },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException('Không tìm thấy ví cho tài khoản của bạn');
+    }
+
+    return wallet;
+  }
+
   async remitCod(shipperId: string, amount: number) {
     if (amount <= 0) {
       throw new BadRequestException('Số tiền nộp phải lớn hơn 0');
