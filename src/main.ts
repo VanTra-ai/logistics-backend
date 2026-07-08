@@ -2,9 +2,19 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
+import * as express from 'express';
+import { join } from 'path';
+import * as fs from 'fs';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Make sure the uploads folder exists
+  const incidentsDir = join(__dirname, '..', 'public', 'uploads', 'incidents');
+  if (!fs.existsSync(incidentsDir)) {
+    fs.mkdirSync(incidentsDir, { recursive: true });
+  }
+
   const config = new DocumentBuilder()
     .setTitle('Logistics API')
     .setDescription('API cho hệ thống quản lý đơn hàng')
@@ -23,6 +33,8 @@ async function bootstrap() {
   );
 
   app.enableCors();
+
+  app.use('/public', express.static(join(__dirname, '..', 'public')));
 
   await app.listen(3333);
 }

@@ -43,6 +43,9 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { UserClsInterceptor } from './audit-logs/user-cls.interceptor';
 import { ReportsModule } from './reports/reports.module';
 import { DailyStats } from './reports/daily-stat.entity';
+import { IncidentsModule } from './incidents/incidents.module';
+import { OrderIncident } from './incidents/incident.entity';
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -72,6 +75,7 @@ import { DailyStats } from './reports/daily-stat.entity';
         AuditItem,
         AuditLog,
         DailyStats,
+        OrderIncident,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),
@@ -89,11 +93,10 @@ import { DailyStats } from './reports/daily-stat.entity';
     MaterialsModule,
     AuditsModule,
     TmsModule,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     ClsModule.forRoot({ global: true, middleware: { mount: true } }),
     AuditLogsModule,
     ReportsModule,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    IncidentsModule,
     ScheduleModule.forRoot(),
   ],
   controllers: [],
