@@ -104,8 +104,10 @@ export class OrdersExcelService {
     try {
       const orderRepository = queryRunner.manager.getRepository(Order);
 
-      // Có thể bulk insert thay vì từng cái để tối ưu
-      const savedOrders = await orderRepository.save(ordersToCreate);
+      // Có thể bulk insert thay vì từng cái để tối ưu, chia chunk 500
+      const savedOrders = await orderRepository.save(ordersToCreate, {
+        chunk: 500,
+      });
 
       await queryRunner.commitTransaction();
       return savedOrders;
@@ -222,7 +224,10 @@ export class OrdersExcelService {
 
     try {
       const orderRepository = queryRunner.manager.getRepository(Order);
-      const savedOrders = await orderRepository.save(ordersToCreate);
+      // Dùng chunk để tối ưu lưu lượng bộ nhớ
+      const savedOrders = await orderRepository.save(ordersToCreate, {
+        chunk: 500,
+      });
       await queryRunner.commitTransaction();
       return savedOrders;
     } catch (err: unknown) {

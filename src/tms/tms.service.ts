@@ -43,24 +43,19 @@ export class TmsService {
 
     try {
       // 1. Find all shippers (role = SHIPPER) with current location
-      const allShippers = await queryRunner.manager.find(User, {
-        where: {
-          role: 'SHIPPER',
-          current_latitude: Not(IsNull()),
-          current_longitude: Not(IsNull()),
-        },
-      });
-
-      // Filter out shippers currently IN_TRANSIT
-      const availableShippers: User[] = [];
-      for (const shipper of allShippers) {
-        const activeShipment = await queryRunner.manager.findOne(Shipment, {
-          where: { shipper: { id: shipper.id }, status: 'IN_TRANSIT' },
-        });
-        if (!activeShipment) {
-          availableShippers.push(shipper);
-        }
-      }
+      // Filter out shippers currently IN_TRANSIT using LEFT JOIN to prevent N+1 query issue
+      const availableShippers = await queryRunner.manager
+        .createQueryBuilder(User, 'user')
+        .leftJoin(
+          Shipment,
+          'shipment',
+          "shipment.shipperId = user.id AND shipment.status = 'IN_TRANSIT'",
+        )
+        .where("user.role = 'SHIPPER'")
+        .andWhere('user.current_latitude IS NOT NULL')
+        .andWhere('user.current_longitude IS NOT NULL')
+        .andWhere('shipment.id IS NULL')
+        .getMany();
 
       if (availableShippers.length === 0) {
         await queryRunner.rollbackTransaction();
@@ -135,10 +130,11 @@ export class TmsService {
           });
           const savedShipment = await queryRunner.manager.save(shipment);
 
-          for (const order of assignedOrdersToShipper) {
+          assignedOrdersToShipper.forEach((order) => {
             order.shipment = savedShipment;
-            await queryRunner.manager.save(order);
-          }
+          });
+          await queryRunner.manager.save(Order, assignedOrdersToShipper);
+
           newShipmentsIds.push(savedShipment.id);
         }
       }

@@ -369,7 +369,10 @@ export class OrdersService {
     data: UpdateOrderStatusDto,
   ): Promise<Order> {
     return await this.dataSource.transaction(async (manager) => {
-      const order = await manager.findOne(Order, { where: { id } });
+      const order = await manager.findOne(Order, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
 
       if (!order) {
         throw new NotFoundException('Không tìm thấy đơn hàng!');
@@ -595,80 +598,83 @@ export class OrdersService {
       throw new BadRequestException('Danh sách mã vận đơn trống!');
     }
 
-    // 1. Tìm tất cả đơn hàng khớp với mảng mã vận đơn (Dùng toán tử In)
-    const orders = await this.ordersRepository.find({
-      where: { tracking_number: In(trackingNumbers) },
-      relations: { pickup_hub: true },
-    });
-
-    if (orders.length === 0) {
-      throw new NotFoundException('Không tìm thấy đơn hàng nào hợp lệ!');
-    }
-
-    // Kiểm tra chéo bưu cục nếu là HUB_COORDINATOR
-    if (actorUserId) {
-      const user = await this.usersRepository.findOne({
-        where: { id: actorUserId },
-        relations: { hub: true },
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Tìm tất cả đơn hàng khớp với mảng mã vận đơn (Dùng toán tử In)
+      const orders = await manager.find(Order, {
+        where: { tracking_number: In(trackingNumbers) },
+        relations: { pickup_hub: true },
+        lock: { mode: 'pessimistic_write' },
       });
-      if (user && user.role === 'HUB_COORDINATOR') {
-        const coordinatorHubId = user.hub?.id;
-        if (!coordinatorHubId) {
-          throw new BadRequestException(
-            'Điều phối viên chưa được gán bưu cục quản lý!',
-          );
-        }
 
-        const invalidHubOrder = orders.find(
-          (order) =>
-            !order.pickup_hub || order.pickup_hub.id !== coordinatorHubId,
-        );
-        if (invalidHubOrder) {
-          throw new BadRequestException(
-            `Đơn hàng ${invalidHubOrder.tracking_number} không thuộc quyền quản lý của bưu cục bạn!`,
+      if (orders.length === 0) {
+        throw new NotFoundException('Không tìm thấy đơn hàng nào hợp lệ!');
+      }
+
+      // Kiểm tra chéo bưu cục nếu là HUB_COORDINATOR
+      if (actorUserId) {
+        const user = await manager.findOne(User, {
+          where: { id: actorUserId },
+          relations: { hub: true },
+        });
+        if (user && user.role === 'HUB_COORDINATOR') {
+          const coordinatorHubId = user.hub?.id;
+          if (!coordinatorHubId) {
+            throw new BadRequestException(
+              'Điều phối viên chưa được gán bưu cục quản lý!',
+            );
+          }
+
+          const invalidHubOrder = orders.find(
+            (order) =>
+              !order.pickup_hub || order.pickup_hub.id !== coordinatorHubId,
           );
+          if (invalidHubOrder) {
+            throw new BadRequestException(
+              `Đơn hàng ${invalidHubOrder.tracking_number} không thuộc quyền quản lý của bưu cục bạn!`,
+            );
+          }
         }
       }
-    }
 
-    // 2. Lọc ra những đơn hàng đủ điều kiện nhập kho
-    const validStatuses = ['PENDING', 'PICKING'];
-    const validOrders = orders.filter((order) =>
-      validStatuses.includes(order.current_status),
-    );
-
-    if (validOrders.length === 0) {
-      throw new BadRequestException(
-        'Các đơn hàng này đã được nhập kho hoặc không hợp lệ!',
+      // 2. Lọc ra những đơn hàng đủ điều kiện nhập kho
+      const validStatuses = ['PENDING', 'PICKING'];
+      const validOrders = orders.filter((order) =>
+        validStatuses.includes(order.current_status),
       );
-    }
 
-    // 3. Cập nhật trạng thái đồng loạt sang AT_HUB
-    for (const order of validOrders) {
-      order.current_status = 'AT_HUB';
-    }
+      if (validOrders.length === 0) {
+        throw new BadRequestException(
+          'Các đơn hàng này đã được nhập kho hoặc không hợp lệ!',
+        );
+      }
 
-    // Lưu một mảng dữ liệu cùng lúc để tối ưu hiệu năng (Bulk Update)
-    await this.ordersRepository.save(validOrders);
+      // 3. Cập nhật trạng thái đồng loạt sang AT_HUB
+      for (const order of validOrders) {
+        order.current_status = 'AT_HUB';
+      }
 
-    // 4. Ghi log tracking đồng loạt bằng Promise.all
-    await Promise.all(
-      validOrders.map((order) =>
-        this.trackingsService.addTrackingRecord({
-          order: order,
-          status: 'AT_HUB',
-          note: `Đơn hàng đã được nhập kho bởi ${actorName}`,
-        }),
-      ),
-    );
+      // Lưu một mảng dữ liệu cùng lúc để tối ưu hiệu năng (Bulk Update)
+      await manager.save(Order, validOrders);
 
-    // 5. Trả về thống kê cho Frontend báo cáo
-    return {
-      total_scanned: trackingNumbers.length,
-      success_count: validOrders.length,
-      failed_count: trackingNumbers.length - validOrders.length,
-      success_trackings: validOrders.map((o) => o.tracking_number),
-    };
+      // 4. Ghi log tracking đồng loạt bằng Promise.all
+      await Promise.all(
+        validOrders.map((order) =>
+          this.trackingsService.addTrackingRecordWithManager(manager, {
+            order: order,
+            status: 'AT_HUB',
+            note: `Đơn hàng đã được nhập kho bởi ${actorName}`,
+          }),
+        ),
+      );
+
+      // 5. Trả về thống kê cho Frontend báo cáo
+      return {
+        total_scanned: trackingNumbers.length,
+        success_count: validOrders.length,
+        failed_count: trackingNumbers.length - validOrders.length,
+        success_trackings: validOrders.map((o) => o.tracking_number),
+      };
+    });
   }
 
   async scanOutOrders(
@@ -681,90 +687,93 @@ export class OrdersService {
       throw new BadRequestException('Danh sách mã vận đơn trống!');
     }
 
-    // 1. Kiểm tra tính hợp lệ của Shipper nhận bàn giao
-    const shipper = await this.usersRepository.findOne({
-      where: { id: shipperId },
-    });
-    if (!shipper || shipper.role !== 'SHIPPER') {
-      throw new BadRequestException(
-        'ID Người giao hàng không hợp lệ hoặc không tồn tại!',
-      );
-    }
-
-    // 2. Lấy danh sách đơn hàng từ CSDL
-    const orders = await this.ordersRepository.find({
-      where: { tracking_number: In(trackingNumbers) },
-      relations: { pickup_hub: true },
-    });
-
-    if (orders.length === 0) {
-      throw new NotFoundException('Không tìm thấy mã vận đơn nào hợp lệ!');
-    }
-
-    // Kiểm tra chéo bưu cục nếu là HUB_COORDINATOR
-    if (actorUserId) {
-      const user = await this.usersRepository.findOne({
-        where: { id: actorUserId },
-        relations: { hub: true },
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Kiểm tra tính hợp lệ của Shipper nhận bàn giao
+      const shipper = await manager.findOne(User, {
+        where: { id: shipperId },
       });
-      if (user && user.role === 'HUB_COORDINATOR') {
-        const coordinatorHubId = user.hub?.id;
-        if (!coordinatorHubId) {
-          throw new BadRequestException(
-            'Điều phối viên chưa được gán bưu cục quản lý!',
-          );
-        }
-
-        const invalidHubOrder = orders.find(
-          (order) =>
-            !order.pickup_hub || order.pickup_hub.id !== coordinatorHubId,
+      if (!shipper || shipper.role !== 'SHIPPER') {
+        throw new BadRequestException(
+          'ID Người giao hàng không hợp lệ hoặc không tồn tại!',
         );
-        if (invalidHubOrder) {
-          throw new BadRequestException(
-            `Đơn hàng ${invalidHubOrder.tracking_number} không thuộc quyền quản lý của bưu cục bạn!`,
+      }
+
+      // 2. Lấy danh sách đơn hàng từ CSDL
+      const orders = await manager.find(Order, {
+        where: { tracking_number: In(trackingNumbers) },
+        relations: { pickup_hub: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (orders.length === 0) {
+        throw new NotFoundException('Không tìm thấy mã vận đơn nào hợp lệ!');
+      }
+
+      // Kiểm tra chéo bưu cục nếu là HUB_COORDINATOR
+      if (actorUserId) {
+        const user = await manager.findOne(User, {
+          where: { id: actorUserId },
+          relations: { hub: true },
+        });
+        if (user && user.role === 'HUB_COORDINATOR') {
+          const coordinatorHubId = user.hub?.id;
+          if (!coordinatorHubId) {
+            throw new BadRequestException(
+              'Điều phối viên chưa được gán bưu cục quản lý!',
+            );
+          }
+
+          const invalidHubOrder = orders.find(
+            (order) =>
+              !order.pickup_hub || order.pickup_hub.id !== coordinatorHubId,
           );
+          if (invalidHubOrder) {
+            throw new BadRequestException(
+              `Đơn hàng ${invalidHubOrder.tracking_number} không thuộc quyền quản lý của bưu cục bạn!`,
+            );
+          }
         }
       }
-    }
 
-    // 3. Lọc các đơn hàng đủ điều kiện xuất kho (Phải đang nằm ở Hub)
-    const validOrders = orders.filter(
-      (order) => order.current_status === 'AT_HUB',
-    );
-
-    if (validOrders.length === 0) {
-      throw new BadRequestException(
-        'Các đơn hàng này chưa nhập kho hoặc không đủ điều kiện xuất kho!',
+      // 3. Lọc các đơn hàng đủ điều kiện xuất kho (Phải đang nằm ở Hub)
+      const validOrders = orders.filter(
+        (order) => order.current_status === 'AT_HUB',
       );
-    }
 
-    // 4. Cập nhật trạng thái và "sang tên" Shipper giao hàng
-    for (const order of validOrders) {
-      order.current_status = 'DELIVERING';
-      order.shipper = shipper; // Ghi đè Shipper đi lấy hàng bằng Shipper đi giao hàng
-    }
+      if (validOrders.length === 0) {
+        throw new BadRequestException(
+          'Các đơn hàng này chưa nhập kho hoặc không đủ điều kiện xuất kho!',
+        );
+      }
 
-    // Cập nhật hàng loạt (Bulk Update)
-    await this.ordersRepository.save(validOrders);
+      // 4. Cập nhật trạng thái và "sang tên" Shipper giao hàng
+      for (const order of validOrders) {
+        order.current_status = 'DELIVERING';
+        order.shipper = shipper; // Ghi đè Shipper đi lấy hàng bằng Shipper đi giao hàng
+      }
 
-    // 5. Ghi log hành trình đồng loạt
-    await Promise.all(
-      validOrders.map((order) =>
-        this.trackingsService.addTrackingRecord({
-          order: order,
-          status: 'DELIVERING',
-          note: `Đơn hàng đã xuất kho. Bàn giao cho Shipper: ${shipper.full_name} (${shipper.phone_number}). Thao tác bởi: ${actorName}`,
-        }),
-      ),
-    );
+      // Cập nhật hàng loạt (Bulk Update)
+      await manager.save(Order, validOrders);
 
-    return {
-      total_scanned: trackingNumbers.length,
-      success_count: validOrders.length,
-      failed_count: trackingNumbers.length - validOrders.length,
-      success_trackings: validOrders.map((o) => o.tracking_number),
-      assigned_to: shipper.full_name,
-    };
+      // 5. Ghi log hành trình đồng loạt
+      await Promise.all(
+        validOrders.map((order) =>
+          this.trackingsService.addTrackingRecordWithManager(manager, {
+            order: order,
+            status: 'DELIVERING',
+            note: `Đơn hàng đã xuất kho. Bàn giao cho Shipper: ${shipper.full_name} (${shipper.phone_number}). Thao tác bởi: ${actorName}`,
+          }),
+        ),
+      );
+
+      return {
+        total_scanned: trackingNumbers.length,
+        success_count: validOrders.length,
+        failed_count: trackingNumbers.length - validOrders.length,
+        success_trackings: validOrders.map((o) => o.tracking_number),
+        assigned_to: shipper.full_name,
+      };
+    });
   }
 
   async completeOrder(
