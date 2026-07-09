@@ -26,6 +26,7 @@ export class IncidentsController {
   constructor(private readonly incidentsService: IncidentsService) {}
 
   @Post()
+  @Roles('SHIPPER', 'HUB_COORDINATOR')
   @UseInterceptors(
     FileInterceptor('proof_image', {
       storage: diskStorage({
@@ -51,6 +52,7 @@ export class IncidentsController {
   }
 
   @Get()
+  @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
   findAll() {
     return this.incidentsService.findAll();
   }

@@ -17,6 +17,7 @@ import { Transaction } from './wallets/transaction.entity';
 import { WalletRequest } from './wallets/wallet-request.entity';
 import { Rating } from './ratings/rating.entity';
 import { Ticket } from './tickets/ticket.entity';
+import { TicketComment } from './tickets/ticket-comment.entity';
 import { FinanceTariff } from './finance/finance.entity';
 import { Location } from './locations/location.entity';
 import { Material } from './materials/material.entity';
@@ -83,6 +84,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
         OrderIncident,
         Notification,
         WalletRequest,
+        TicketComment,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),

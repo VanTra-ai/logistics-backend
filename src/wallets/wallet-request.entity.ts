@@ -7,6 +7,7 @@ import {
   ManyToOne,
 } from 'typeorm';
 import { User } from '../users/user.entity';
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('wallet_requests')
 export class WalletRequest {
@@ -22,7 +23,11 @@ export class WalletRequest {
   @Column()
   type!: string; // WITHDRAW, REMIT
 
-  @Column('decimal', { precision: 12, scale: 2 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    transformer: new ColumnNumericTransformer(),
+  })
   amount!: number;
 
   @Column('simple-json', { nullable: true })

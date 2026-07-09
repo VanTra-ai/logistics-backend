@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -374,15 +375,25 @@ export class OrdersService {
   async updateOrderStatus(
     id: string,
     data: UpdateOrderStatusDto,
+    currentUser?: { userId: string; role: string; hubId?: string },
   ): Promise<Order> {
     return await this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, {
         where: { id },
+        relations: { shipper: true },
         lock: { mode: 'pessimistic_write' },
       });
 
       if (!order) {
         throw new NotFoundException('Không tìm thấy đơn hàng!');
+      }
+
+      if (currentUser?.role === 'SHIPPER') {
+        if (!order.shipper || order.shipper.id !== currentUser.userId) {
+          throw new ForbiddenException(
+            'Shipper chỉ được cập nhật trạng thái đơn hàng của mình!',
+          );
+        }
       }
 
       if (
@@ -624,14 +635,14 @@ export class OrdersService {
 
     // Thực thi gán đơn và đổi trạng thái
     order.shipper = shipper;
-    order.current_status = 'PICKING'; // Trạng thái chuyển thành "Đang đi lấy"
+    order.current_status = 'ASSIGNED'; // Trạng thái chuyển thành "Đã gán Shipper"
 
     const savedOrder = await this.ordersRepository.save(order);
 
     // Ghi log hành trình
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
-      status: 'PICKING',
+      status: 'ASSIGNED',
       note: `Đơn hàng đã được phân công cho Shipper: ${shipper.full_name}`,
     });
 

@@ -6,6 +6,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
+
 // Bảng vật tư đóng gói (Thùng gỗ, Màng xốp...)
 @Entity('materials')
 export class Material {
@@ -17,7 +19,11 @@ export class Material {
   name!: string;
 
   // Đơn giá
-  @Column('decimal', { precision: 10, scale: 2 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    transformer: new ColumnNumericTransformer(),
+  })
   price!: number;
 
   // Tồn kho vật tư

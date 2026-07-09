@@ -9,6 +9,8 @@ import {
 import { Wallet } from './wallet.entity';
 import { Order } from '../orders/order.entity';
 
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
+
 @Entity('transactions')
 export class Transaction {
   @PrimaryGeneratedColumn('uuid')
@@ -22,7 +24,11 @@ export class Transaction {
   @JoinColumn()
   order!: Order;
 
-  @Column('decimal', { precision: 15, scale: 2 })
+  @Column('decimal', {
+    precision: 15,
+    scale: 2,
+    transformer: new ColumnNumericTransformer(),
+  })
   amount!: number;
 
   // Semantic enum values: COD_COLLECTED, COD_REMITTED, COMMISSION_EARNED, INCOME_WITHDRAWN

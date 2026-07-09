@@ -9,6 +9,7 @@ import {
 import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { Order } from '../orders/order.entity';
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('shipments')
 export class Shipment {
@@ -26,7 +27,13 @@ export class Shipment {
   @Column({ nullable: true })
   vehicle_number!: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 1000 })
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 1000,
+    transformer: new ColumnNumericTransformer(),
+  })
   capacity_weight!: number;
 
   // Bưu cục xuất phát
@@ -45,7 +52,12 @@ export class Shipment {
   @OneToMany(() => Order, (order) => order.shipment)
   orders!: Order[];
 
-  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   total_distance!: number;
 
   @CreateDateColumn()

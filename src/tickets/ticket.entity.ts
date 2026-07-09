@@ -3,10 +3,12 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  OneToMany,
   CreateDateColumn,
 } from 'typeorm';
 import { User } from '../users/user.entity';
 import { Order } from '../orders/order.entity';
+import { TicketComment } from './ticket-comment.entity';
 
 @Entity('tickets')
 export class Ticket {
@@ -34,6 +36,9 @@ export class Ticket {
 
   @Column('text', { nullable: true })
   admin_response!: string;
+
+  @OneToMany(() => TicketComment, (comment) => comment.ticket)
+  comments!: TicketComment[];
 
   @CreateDateColumn()
   created_at!: Date;

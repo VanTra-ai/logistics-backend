@@ -64,6 +64,8 @@ export class TmsService {
         .where("user.role = 'SHIPPER'")
         .andWhere('user.current_latitude IS NOT NULL')
         .andWhere('user.current_longitude IS NOT NULL')
+        .andWhere('user.is_online = true')
+        .andWhere("user.last_heartbeat >= NOW() - INTERVAL '10 minutes'")
         .andWhere('shipment.id IS NULL')
         .getMany();
 

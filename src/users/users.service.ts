@@ -214,6 +214,16 @@ export class UsersService {
     await this.usersRepository.save(user);
   }
 
+  async heartbeat(userId: string): Promise<void> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại!');
+    }
+    user.is_online = true;
+    user.last_heartbeat = new Date();
+    await this.usersRepository.save(user);
+  }
+
   async findAllUsers(): Promise<User[]> {
     return this.usersRepository.find({
       relations: { hub: true },

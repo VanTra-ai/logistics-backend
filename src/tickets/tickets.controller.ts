@@ -71,4 +71,32 @@ export class TicketsController {
       data: updatedTicket,
     };
   }
+
+  @Post(':id/comments')
+  async addComment(
+    @Param('id') id: string,
+    @Body('message') message: string,
+    @Body('attachments') attachments: string[],
+    @Request() req: { user: { userId: string } },
+  ) {
+    const comment = await this.ticketsService.addComment(
+      id,
+      req.user.userId,
+      message,
+      attachments,
+    );
+    return {
+      message: 'Đã thêm bình luận!',
+      data: comment,
+    };
+  }
+
+  @Get(':id/comments')
+  async getComments(@Param('id') id: string) {
+    const comments = await this.ticketsService.getComments(id);
+    return {
+      message: 'Tra cứu bình luận thành công!',
+      data: comments,
+    };
+  }
 }

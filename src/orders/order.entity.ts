@@ -11,6 +11,7 @@ import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { Shipment } from '../shipments/shipment.entity';
 import { Location } from '../locations/location.entity';
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('orders')
 export class Order {
@@ -41,22 +42,50 @@ export class Order {
   receiver_address!: string;
 
   // 4. Thông số hàng hóa & Tài chính
-  @Column('decimal', { precision: 10, scale: 2 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    transformer: new ColumnNumericTransformer(),
+  })
   weight!: number; // Khối lượng (kg)
 
-  @Column('decimal', { precision: 12, scale: 2 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    transformer: new ColumnNumericTransformer(),
+  })
   cod_amount!: number; // Tiền thu hộ (COD)
 
-  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   length!: number;
 
-  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   width!: number;
 
-  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   height!: number;
 
-  @Column('decimal', { precision: 12, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   cod_fee!: number;
 
   @Column('text', { nullable: true })
@@ -66,17 +95,32 @@ export class Order {
   delivery_image_url!: string; // Hình xác nhận
 
   // TMS Delivery Coordinates
-  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    nullable: true,
+    transformer: new ColumnNumericTransformer(),
+  })
   latitude!: number;
 
-  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    nullable: true,
+    transformer: new ColumnNumericTransformer(),
+  })
   longitude!: number;
 
   @Column({ type: 'int', default: 0 })
   delivery_sequence!: number;
 
   // Thêm vào bên trong class Order
-  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   shipping_fee!: number;
 
   @Column({ default: 'PENDING' })
@@ -101,7 +145,12 @@ export class Order {
   @ManyToOne(() => Location, { nullable: true, eager: false })
   location!: Location;
 
-  @Column('decimal', { precision: 10, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: new ColumnNumericTransformer(),
+  })
   material_fee!: number;
 
   @CreateDateColumn()

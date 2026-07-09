@@ -153,15 +153,17 @@ export class OrdersController {
   }
 
   @Patch(':id/status')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
   @UseGuards(RolesGuard)
   async updateStatus(
     @Param('id') id: string,
     @Body() updateOrderStatusDto: UpdateOrderStatusDto,
+    @Request() req: { user: { userId: string; role: string; hubId?: string } },
   ) {
     const order = await this.ordersService.updateOrderStatus(
       id,
       updateOrderStatusDto,
+      req.user,
     );
     return {
       message: 'Cập nhật trạng thái đơn hàng thành công!',

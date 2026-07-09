@@ -8,6 +8,7 @@ import {
   Patch,
   Param,
   Delete,
+  ForbiddenException,
 } from '@nestjs/common';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -85,6 +86,14 @@ export class UsersController {
     return { message: 'Cập nhật vị trí thành công!' };
   }
 
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('SHIPPER')
+  @Patch('heartbeat')
+  async heartbeat(@Request() req: { user: { userId: string } }) {
+    await this.usersService.heartbeat(req.user.userId);
+    return { message: 'Heartbeat nhận thành công!' };
+  }
+
   @Get()
   @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -97,6 +106,7 @@ export class UsersController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   async adminUpdateUser(
     @Param('id') id: string,
+    @Request() req: { user: { userId: string } },
     @Body()
     body: {
       fullName?: string;
@@ -107,6 +117,13 @@ export class UsersController {
       status?: string;
     },
   ) {
+    if (
+      req.user.userId === id &&
+      body.role !== undefined &&
+      body.role !== Role.ADMIN
+    ) {
+      throw new ForbiddenException('Bạn không thể tự hạ quyền của chính mình!');
+    }
     return await this.usersService.adminUpdateUser(id, body);
   }
 

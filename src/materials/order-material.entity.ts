@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import { Order } from '../orders/order.entity';
 import { Material } from './material.entity';
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 // Bảng liên kết vật tư đóng gói với đơn hàng
 @Entity('order_materials')
@@ -27,7 +28,11 @@ export class OrderMaterial {
   quantity!: number;
 
   // Đơn giá tại thời điểm sử dụng
-  @Column('decimal', { precision: 10, scale: 2 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    transformer: new ColumnNumericTransformer(),
+  })
   unit_price!: number;
 
   @CreateDateColumn()

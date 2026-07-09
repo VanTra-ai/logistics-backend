@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ticket } from './ticket.entity';
+import { TicketComment } from './ticket-comment.entity';
 import { Order } from '../orders/order.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import {
@@ -58,6 +59,9 @@ export class TicketsService {
   constructor(
     @InjectRepository(Ticket)
     private ticketsRepository: Repository<Ticket>,
+
+    @InjectRepository(TicketComment)
+    private ticketCommentsRepository: Repository<TicketComment>,
 
     @InjectRepository(Order) // Cần để validate mã đơn hàng nếu có
     private ordersRepository: Repository<Order>,
@@ -152,5 +156,34 @@ export class TicketsService {
     }
 
     return savedTicket;
+  }
+
+  async addComment(
+    ticketId: string,
+    userId: string,
+    message: string,
+    attachments?: string[],
+  ): Promise<TicketComment> {
+    const ticket = await this.ticketsRepository.findOne({
+      where: { id: ticketId },
+    });
+    if (!ticket) throw new NotFoundException('Không tìm thấy khiếu nại!');
+
+    const comment = this.ticketCommentsRepository.create({
+      ticket: { id: ticketId },
+      user: { id: userId },
+      message,
+      attachments: attachments || [],
+    });
+
+    return await this.ticketCommentsRepository.save(comment);
+  }
+
+  async getComments(ticketId: string): Promise<TicketComment[]> {
+    return await this.ticketCommentsRepository.find({
+      where: { ticket: { id: ticketId } },
+      relations: { user: true },
+      order: { created_at: 'ASC' },
+    });
   }
 }

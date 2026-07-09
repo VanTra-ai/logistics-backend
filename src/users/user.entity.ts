@@ -8,6 +8,7 @@ import {
   ManyToOne,
 } from 'typeorm';
 import { Hub } from '../hubs/hub.entity';
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('users')
 export class User {
@@ -26,10 +27,20 @@ export class User {
   @Column({ type: 'text', nullable: true })
   address?: string;
 
-  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    nullable: true,
+    transformer: new ColumnNumericTransformer(),
+  })
   current_latitude!: number | null;
 
-  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    nullable: true,
+    transformer: new ColumnNumericTransformer(),
+  })
   current_longitude!: number | null;
 
   @Column()
@@ -60,6 +71,12 @@ export class User {
 
   @ManyToOne(() => Hub, { nullable: true })
   hub!: Hub;
+
+  @Column({ default: false })
+  is_online!: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  last_heartbeat!: Date | null;
 
   @CreateDateColumn()
   created_at!: Date;

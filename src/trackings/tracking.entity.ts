@@ -6,6 +6,7 @@ import {
   ManyToOne,
 } from 'typeorm';
 import { Order } from '../orders/order.entity';
+import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('tracking_history')
 export class TrackingHistory {
@@ -25,10 +26,20 @@ export class TrackingHistory {
   note!: string;
 
   // Tọa độ GPS để vẽ lộ trình di chuyển (thời gian thực)
-  @Column('decimal', { precision: 9, scale: 6, nullable: true })
+  @Column('decimal', {
+    precision: 9,
+    scale: 6,
+    nullable: true,
+    transformer: new ColumnNumericTransformer(),
+  })
   lat!: number;
 
-  @Column('decimal', { precision: 9, scale: 6, nullable: true })
+  @Column('decimal', {
+    precision: 9,
+    scale: 6,
+    nullable: true,
+    transformer: new ColumnNumericTransformer(),
+  })
   long!: number;
 
   @Column('text', { nullable: true })
