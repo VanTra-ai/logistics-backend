@@ -19,6 +19,7 @@ import { Rating } from './ratings/rating.entity';
 import { Ticket } from './tickets/ticket.entity';
 import { TicketComment } from './tickets/ticket-comment.entity';
 import { FinanceTariff } from './finance/finance.entity';
+import { FinanceTariffAudit } from './finance/finance-tariff-audit.entity';
 import { Location } from './locations/location.entity';
 import { Material } from './materials/material.entity';
 import { OrderMaterial } from './materials/order-material.entity';
@@ -74,6 +75,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
         Rating,
         Ticket,
         FinanceTariff,
+        FinanceTariffAudit,
         Location,
         Material,
         OrderMaterial,

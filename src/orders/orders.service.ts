@@ -15,6 +15,7 @@ import { User } from '../users/user.entity';
 import { Wallet } from '../wallets/wallet.entity';
 import { Transaction } from '../wallets/transaction.entity';
 import { FinanceService } from '../finance/finance.service';
+import { FinanceTariff } from '../finance/finance.entity';
 import {
   IsNotEmpty,
   IsString,
@@ -332,24 +333,24 @@ export class OrdersService {
     return `${prefix}${year}${randomChars}`;
   }
 
-  async createOrder(data: CreateOrderDto, userId: string): Promise<Order> {
-    const hub = await this.hubsService.findById(data.pickup_hub_id);
-    if (!hub) {
-      throw new NotFoundException('Bưu cục không tồn tại trong hệ thống!');
-    }
+  private calculateShippingFees(
+    orderData: {
+      weight: number;
+      length?: number;
+      width?: number;
+      height?: number;
+      cod_amount?: number;
+    },
+    tariff: FinanceTariff,
+  ) {
+    const length = orderData.length || 0;
+    const width = orderData.width || 0;
+    const height = orderData.height || 0;
+    const divisor = Number(tariff.volumetric_divisor) || 5000;
+    const bulkWeight = divisor > 0 ? (length * width * height) / divisor : 0;
+    const chargeableWeight = Math.max(orderData.weight, bulkWeight);
 
-    const trackingNumber = this.generateTrackingNumber();
-
-    const tariff = await this.financeService.getTariff();
-
-    // 1. Quy đổi thể tích cồng kềnh
-    const length = data.length || 0;
-    const width = data.width || 0;
-    const height = data.height || 0;
-    const bulkWeight = (length * width * height) / 5000;
-    const chargeableWeight = Math.max(data.weight, bulkWeight);
-
-    // 2. Tính phí vận chuyển (Ước lượng khoảng cách 5km mặc định)
+    // Tính phí vận chuyển (Ước lượng khoảng cách 5km mặc định)
     const distance = 5;
     const extraDistance = Math.max(
       0,
@@ -358,15 +359,28 @@ export class OrdersService {
     const baseShippingPrice =
       Number(tariff.base_price_distance) +
       extraDistance * Number(tariff.block_price_distance);
-    // Mỗi kg phụ trội trên 2kg cộng 5,000đ
-    const shippingFee =
-      baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
 
-    // 3. Tính phí COD
+    const surplusPrice = Number(tariff.surplus_weight_price) || 5000;
+    const shippingFee =
+      baseShippingPrice + Math.max(0, chargeableWeight - 2) * surplusPrice;
+
+    const codAmount = orderData.cod_amount || 0;
     const codFee =
-      data.cod_amount > 0
-        ? (data.cod_amount * Number(tariff.cod_fee_percent)) / 100
-        : 0;
+      codAmount > 0 ? (codAmount * Number(tariff.cod_fee_percent)) / 100 : 0;
+
+    return { shippingFee, codFee };
+  }
+
+  async createOrder(data: CreateOrderDto, userId: string): Promise<Order> {
+    const hub = await this.hubsService.findById(data.pickup_hub_id);
+    if (!hub) {
+      throw new NotFoundException('Bưu cục không tồn tại trong hệ thống!');
+    }
+
+    const trackingNumber = this.generateTrackingNumber();
+
+    const tariff = await this.financeService.getTariff(data.pickup_hub_id);
+    const { shippingFee, codFee } = this.calculateShippingFees(data, tariff);
 
     const newOrder = this.ordersRepository.create({
       tracking_number: trackingNumber,
@@ -378,9 +392,9 @@ export class OrdersService {
       receiver_phone: data.receiver_phone,
       receiver_address: data.receiver_address,
       weight: data.weight,
-      length,
-      width,
-      height,
+      length: data.length,
+      width: data.width,
+      height: data.height,
       cod_amount: data.cod_amount,
       cod_fee: codFee,
       shipping_fee: shippingFee,
@@ -927,7 +941,9 @@ export class OrdersService {
       const savedOrder = await queryRunner.manager.save(Order, order);
 
       // Cập nhật ví và giao dịch cho tài xế & bưu cục
-      const tariff = await this.financeService.getTariff();
+      const tariff = await this.financeService.getTariff(
+        savedOrder.pickup_hub?.id,
+      );
 
       // 1. Cộng chiết khấu cho Tài xế (Shipper Payout)
       let shipperWallet = await queryRunner.manager.findOne(Wallet, {
@@ -1315,28 +1331,10 @@ export class OrdersService {
       if (data.note !== undefined) order.note = data.note!;
 
       // Recalculate fees
-      const tariff = await this.financeService.getTariff();
-      const length = order.length || 0;
-      const width = order.width || 0;
-      const height = order.height || 0;
-      const bulkWeight = (length * width * height) / 5000;
-      const chargeableWeight = Math.max(order.weight, bulkWeight);
-
-      const distance = 5;
-      const extraDistance = Math.max(
-        0,
-        distance - Number(tariff.base_distance_limit),
-      );
-      const baseShippingPrice =
-        Number(tariff.base_price_distance) +
-        extraDistance * Number(tariff.block_price_distance);
-      order.shipping_fee =
-        baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
-
-      order.cod_fee =
-        order.cod_amount > 0
-          ? (order.cod_amount * Number(tariff.cod_fee_percent)) / 100
-          : 0;
+      const tariff = await this.financeService.getTariff(order.pickup_hub?.id);
+      const { shippingFee, codFee } = this.calculateShippingFees(order, tariff);
+      order.shipping_fee = shippingFee;
+      order.cod_fee = codFee;
 
       return await manager.save(order);
     });
@@ -1379,28 +1377,24 @@ export class OrdersService {
       const oldWeight = Number(order.weight) || 0;
 
       // Tính lại cước
-      const tariff = await this.financeService.getTariff();
-      const length = data.length || 0;
-      const width = data.width || 0;
-      const height = data.height || 0;
-      const bulkWeight = (length * width * height) / 5000;
-      const chargeableWeight = Math.max(data.weight, bulkWeight);
+      const tariff = await this.financeService.getTariff(order.pickup_hub?.id);
+      const orderDataForFee = {
+        weight: data.weight,
+        length: data.length !== undefined ? data.length : order.length,
+        width: data.width !== undefined ? data.width : order.width,
+        height: data.height !== undefined ? data.height : order.height,
+        cod_amount: order.cod_amount,
+      };
 
-      const distance = 5; // Ước lượng mặc định như khi tạo đơn
-      const extraDistance = Math.max(
-        0,
-        distance - Number(tariff.base_distance_limit),
+      const { shippingFee: newFee } = this.calculateShippingFees(
+        orderDataForFee,
+        tariff,
       );
-      const baseShippingPrice =
-        Number(tariff.base_price_distance) +
-        extraDistance * Number(tariff.block_price_distance);
-      const newFee =
-        baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
 
       order.weight = data.weight;
-      order.length = length;
-      order.width = width;
-      order.height = height;
+      order.length = orderDataForFee.length;
+      order.width = orderDataForFee.width;
+      order.height = orderDataForFee.height;
       order.shipping_fee = newFee;
 
       const savedOrder = await manager.save(Order, order);

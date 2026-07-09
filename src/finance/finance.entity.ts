@@ -1,10 +1,19 @@
-import { Entity, Column, PrimaryColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('finance_tariffs')
 export class FinanceTariff {
-  @PrimaryColumn({ default: 'default' })
+  @PrimaryGeneratedColumn('uuid')
   id!: string;
+
+  @Column({ default: 'DEFAULT' })
+  hub_id!: string;
 
   // 1. Phí Vận chuyển
   @Column('decimal', {
@@ -30,6 +39,22 @@ export class FinanceTariff {
     transformer: new ColumnNumericTransformer(),
   })
   block_price_distance!: number; // Giá block km tiếp theo (ví dụ 4,000đ/km)
+
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 5000,
+    transformer: new ColumnNumericTransformer(),
+  })
+  surplus_weight_price!: number; // Giá mỗi kg phụ trội (mặc định 5,000đ)
+
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 5000,
+    transformer: new ColumnNumericTransformer(),
+  })
+  volumetric_divisor!: number; // Hệ số quy đổi thể tích (mặc định 5000)
 
   // 2. Phí dịch vụ COD
   @Column('decimal', {
@@ -64,4 +89,10 @@ export class FinanceTariff {
     transformer: new ColumnNumericTransformer(),
   })
   shipper_payout_percent!: number; // % Phí giao hàng tài xế nhận (nếu tính theo %)
+
+  @CreateDateColumn()
+  created_at!: Date;
+
+  @UpdateDateColumn()
+  updated_at!: Date;
 }
