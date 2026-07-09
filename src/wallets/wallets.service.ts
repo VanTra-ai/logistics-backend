@@ -21,14 +21,14 @@ export class WalletsService {
 
   async findAll() {
     return this.walletsRepository.find({
-      relations: { user: true },
+      relations: { user: { hub: true } },
     });
   }
 
   async findMyWallet(userId: string) {
     const wallet = await this.walletsRepository.findOne({
       where: { user: { id: userId } },
-      relations: { user: true },
+      relations: { user: { hub: true } },
     });
 
     if (!wallet) {
@@ -40,7 +40,7 @@ export class WalletsService {
 
   async getRequests() {
     return this.dataSource.manager.find(WalletRequest, {
-      relations: { user: true },
+      relations: { user: { hub: true } },
       order: { created_at: 'DESC' },
     });
   }
@@ -96,7 +96,7 @@ export class WalletsService {
     try {
       const request = await queryRunner.manager.findOne(WalletRequest, {
         where: { id: requestId },
-        relations: { user: true },
+        relations: { user: { hub: true } },
         lock: { mode: 'pessimistic_write' },
       });
 

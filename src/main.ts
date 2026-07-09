@@ -40,7 +40,7 @@ async function bootstrap() {
 
   app.use('/public', express.static(join(__dirname, '..', 'public')));
 
-  await app.listen(3333);
+  await app.listen(3333, '0.0.0.0');
 }
 bootstrap().catch((err) => {
   console.error('Lỗi khi khởi động ứng dụng:', err);

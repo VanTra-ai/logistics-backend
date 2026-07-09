@@ -695,7 +695,7 @@ export class OrdersService {
       }
 
       // 2. Lọc ra những đơn hàng đủ điều kiện nhập kho
-      const validStatuses = ['PENDING', 'PICKING'];
+      const validStatuses = ['PENDING', 'PICKING', 'PICKED'];
       const validOrders = orders.filter((order) =>
         validStatuses.includes(order.current_status),
       );
@@ -721,7 +721,7 @@ export class OrdersService {
             manager,
             order: order,
             status: 'AT_HUB',
-            note: `Đơn hàng đã được nhập kho bởi ${actorName}`,
+            note: `Đơn hàng đã được nhập bưu cục ${order.pickup_hub?.name || 'Vô danh'} bởi ${actorName}`,
           }),
         ),
       );
@@ -731,7 +731,15 @@ export class OrdersService {
         total_scanned: trackingNumbers.length,
         success_count: validOrders.length,
         failed_count: trackingNumbers.length - validOrders.length,
-        success_trackings: validOrders.map((o) => o.tracking_number),
+        success_trackings: validOrders.map((o) => ({
+          tracking_number: o.tracking_number,
+          order_id: o.id,
+          suggested_zone:
+            Number(o.weight) < 5
+              ? 'Khu vực A (Dưới 5kg)'
+              : 'Khu vực B (Từ 5kg)',
+          hub_name: o.pickup_hub?.name || 'Vô danh',
+        })),
       };
     });
   }
