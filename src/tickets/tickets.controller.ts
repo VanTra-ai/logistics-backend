@@ -7,6 +7,7 @@ import {
   Param,
   Request,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import {
   TicketsService,
@@ -27,23 +28,45 @@ export class TicketsController {
   @UseGuards(RolesGuard)
   async getAllTickets(
     @Request() req: { user: { role?: string; hubId?: string } },
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('status') status?: string,
+    @Query('search') search?: string,
   ) {
-    const tickets = await this.ticketsService.getAllTickets(req.user);
+    const tickets = await this.ticketsService.getAllTickets(
+      req.user,
+      parseInt(page, 10),
+      parseInt(limit, 10),
+      status,
+      search,
+    );
     return {
       message: 'Tra cứu danh sách khiếu nại thành công!',
-      data: tickets,
+      ...tickets,
     };
   }
 
   @Get('me')
   @Roles('CUSTOMER')
   @UseGuards(RolesGuard)
-  async getMyTickets(@Request() req: { user: { userId: string } }) {
-    const tickets = await this.ticketsService.getMyTickets(req.user.userId);
+  async getMyTickets(
+    @Request() req: { user: { userId: string } },
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+  ) {
+    const tickets = await this.ticketsService.getMyTickets(
+      req.user.userId,
+      parseInt(page, 10),
+      parseInt(limit, 10),
+      status,
+      search,
+    );
 
     return {
       message: 'Tra cứu danh sách khiếu nại thành công!',
-      data: tickets,
+      ...tickets,
     };
   }
 

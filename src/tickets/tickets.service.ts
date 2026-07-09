@@ -102,30 +102,90 @@ export class TicketsService {
     return await this.ticketsRepository.save(newTicket);
   }
 
-  async getMyTickets(userId: string): Promise<Ticket[]> {
-    return await this.ticketsRepository.find({
-      where: { customer: { id: userId } },
-      relations: { order: true }, // Join bảng để frontend hiển thị được mã đơn hàng
-      order: { created_at: 'DESC' }, // Sắp xếp khiếu nại mới nhất lên đầu
-    });
-  }
+  async getMyTickets(
+    userId: string,
+    page: number = 1,
+    limit: number = 10,
+    status?: string,
+    search?: string,
+  ) {
+    const query = this.ticketsRepository
+      .createQueryBuilder('ticket')
+      .leftJoinAndSelect('ticket.order', 'order')
+      .leftJoinAndSelect('ticket.customer', 'customer')
+      .where('customer.id = :userId', { userId })
+      .orderBy('ticket.created_at', 'DESC');
 
-  async getAllTickets(currentUser: {
-    role?: string;
-    hubId?: string;
-  }): Promise<Ticket[]> {
-    if (currentUser.role === 'HUB_COORDINATOR') {
-      return await this.ticketsRepository.find({
-        where: { order: { pickup_hub: { id: currentUser.hubId } } },
-        relations: { order: { pickup_hub: true }, customer: true },
-        order: { created_at: 'DESC' },
-      });
+    if (status) {
+      query.andWhere('ticket.status = :status', { status });
+    }
+    if (search) {
+      query.andWhere(
+        '(LOWER(order.tracking_number) LIKE LOWER(:search) OR LOWER(customer.full_name) LIKE LOWER(:search))',
+        { search: `%${search}%` },
+      );
     }
 
-    return await this.ticketsRepository.find({
-      relations: { order: { pickup_hub: true }, customer: true },
-      order: { created_at: 'DESC' },
-    });
+    const [data, totalItems] = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
+  }
+
+  async getAllTickets(
+    currentUser: { role?: string; hubId?: string },
+    page: number = 1,
+    limit: number = 10,
+    status?: string,
+    search?: string,
+  ) {
+    const query = this.ticketsRepository
+      .createQueryBuilder('ticket')
+      .leftJoinAndSelect('ticket.order', 'order')
+      .leftJoinAndSelect('order.pickup_hub', 'pickup_hub')
+      .leftJoinAndSelect('ticket.customer', 'customer')
+      .orderBy('ticket.created_at', 'DESC');
+
+    if (currentUser.role === 'HUB_COORDINATOR') {
+      query.andWhere('pickup_hub.id = :hubId', { hubId: currentUser.hubId });
+    }
+
+    if (status) {
+      query.andWhere('ticket.status = :status', { status });
+    }
+    if (search) {
+      query.andWhere(
+        '(LOWER(order.tracking_number) LIKE LOWER(:search) OR LOWER(customer.full_name) LIKE LOWER(:search))',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [data, totalItems] = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async resolveTicket(

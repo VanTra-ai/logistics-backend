@@ -16,7 +16,14 @@ export class LocationsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async findAll(hubId?: string, zone?: string, status?: string) {
+  async findAll(
+    hubId?: string,
+    zone?: string,
+    status?: string,
+    page: number = 1,
+    limit: number = 10,
+    search?: string,
+  ) {
     const query = this.locationsRepository
       .createQueryBuilder('location')
       .leftJoinAndSelect('location.hub', 'hub')
@@ -35,8 +42,27 @@ export class LocationsService {
     if (status) {
       query.andWhere('location.status = :status', { status });
     }
+    if (search) {
+      query.andWhere('LOWER(location.barcode) LIKE LOWER(:search)', {
+        search: `%${search}%`,
+      });
+    }
 
-    return await query.getMany();
+    const [data, totalItems] = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async create(data: Partial<Location>) {

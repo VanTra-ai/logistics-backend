@@ -15,7 +15,7 @@ export class AuditLogsService {
     limit: number = 10,
     entityName?: string,
     action?: string,
-  ): Promise<{ data: AuditLog[]; total: number }> {
+  ): Promise<{ data: AuditLog[]; meta: any }> {
     const query = this.auditLogRepository.createQueryBuilder('auditLog');
 
     if (entityName) {
@@ -28,7 +28,16 @@ export class AuditLogsService {
     query.skip((page - 1) * limit).take(limit);
     query.orderBy('auditLog.createdAt', 'DESC');
 
-    const [data, total] = await query.getManyAndCount();
-    return { data, total };
+    const [data, totalItems] = await query.getManyAndCount();
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 }

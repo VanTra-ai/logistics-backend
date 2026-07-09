@@ -9,6 +9,7 @@ import {
   UploadedFile,
   UseGuards,
   Request,
+  Query,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -53,8 +54,14 @@ export class IncidentsController {
 
   @Get()
   @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
-  findAll() {
-    return this.incidentsService.findAll();
+  findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('type') type?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    return this.incidentsService.findAll(pageNum, limitNum, type);
   }
 
   @Patch(':id/resolve')

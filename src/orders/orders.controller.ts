@@ -4,6 +4,7 @@ import {
   Get,
   Patch,
   Delete,
+  Query,
   Param,
   Body,
   UseGuards,
@@ -128,12 +129,19 @@ export class OrdersController {
 
   @Get()
   async getAllOrders(
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
     @Request() req: { user: { userId: string; role: string; hubId?: string } },
   ) {
-    const orders = await this.ordersService.findAllOrders(req.user);
+    const result = await this.ordersService.findAllOrders(
+      Number(page),
+      Number(limit),
+      req.user,
+    );
     return {
       message: 'Lấy danh sách đơn hàng thành công!',
-      data: orders,
+      data: result.data,
+      meta: result.meta,
     };
   }
 

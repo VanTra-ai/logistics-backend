@@ -503,22 +503,39 @@ export class OrdersService {
     });
   }
 
-  async findAllOrders(user?: {
-    role: string;
-    hubId?: string;
-  }): Promise<Order[]> {
+  async findAllOrders(
+    page = 1,
+    limit = 10,
+    user?: {
+      role: string;
+      hubId?: string;
+    },
+  ): Promise<{ data: Order[]; meta: any }> {
     const where: FindOptionsWhere<Order> = {};
     if (user?.role === 'HUB_COORDINATOR' && user.hubId) {
       where.pickup_hub = { id: user.hubId };
     }
 
-    return await this.ordersRepository.find({
+    const [data, totalItems] = await this.ordersRepository.findAndCount({
       where,
       order: { created_at: 'DESC' },
       relations: {
         pickup_hub: true,
       },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async findByTrackingNumber(trackingNumber: string): Promise<Order> {

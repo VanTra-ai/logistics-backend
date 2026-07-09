@@ -24,6 +24,7 @@ export class AuthService {
     // 1. Tìm user và kiểm tra mật khẩu (đoạn này chắc bạn đã viết rồi)
     const user = await this.usersRepository.findOne({
       where: { email: loginDto.email },
+      relations: { hub: true },
     });
     if (
       !user ||
@@ -33,7 +34,12 @@ export class AuthService {
     }
 
     // 2. Tạo Payload cho JWT
-    const payload = { email: user.email, sub: user.id, role: user.role };
+    const payload = { 
+      email: user.email, 
+      sub: user.id, 
+      role: user.role,
+      hubId: user.hub?.id || null,
+    };
 
     // 3. Tạo Access Token (sống ngắn) và Refresh Token (sống dài)
     const access_token = this.jwtService.sign(payload);
@@ -53,6 +59,7 @@ export class AuthService {
         email: user.email,
         full_name: user.full_name,
         role: user.role,
+        hub: user.hub,
       },
     };
   }
@@ -71,6 +78,7 @@ export class AuthService {
       // 2. Tìm user trong CSDL
       const user = await this.usersRepository.findOne({
         where: { id: payload.sub },
+        relations: { hub: true },
       });
 
       // 3. Kiểm tra tính hợp lệ
@@ -81,7 +89,12 @@ export class AuthService {
       }
 
       // 4. Tạo cặp Token mới
-      const newPayload = { email: user.email, sub: user.id, role: user.role };
+      const newPayload = { 
+        email: user.email, 
+        sub: user.id, 
+        role: user.role,
+        hubId: user.hub?.id || null,
+      };
       const new_access_token = this.jwtService.sign(newPayload);
       const new_refresh_token = this.jwtService.sign(newPayload, {
         expiresIn: '7d',

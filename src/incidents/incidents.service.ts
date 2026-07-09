@@ -62,14 +62,33 @@ export class IncidentsService {
     return this.incidentRepository.save(incident);
   }
 
-  async findAll() {
-    return this.incidentRepository.find({
-      relations: {
-        order: true,
-        shipper: true,
-        resolvedBy: true,
+  async findAll(page: number = 1, limit: number = 10, type?: string) {
+    const query = this.incidentRepository
+      .createQueryBuilder('incident')
+      .leftJoinAndSelect('incident.order', 'order')
+      .leftJoinAndSelect('incident.shipper', 'shipper')
+      .leftJoinAndSelect('incident.resolvedBy', 'resolvedBy')
+      .orderBy('incident.created_at', 'DESC');
+
+    if (type) {
+      query.andWhere('incident.incident_type = :type', { type });
+    }
+
+    const [items, totalItems] = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data: items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
       },
-    });
+    };
   }
 
   async resolve(

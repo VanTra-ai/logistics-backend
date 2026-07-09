@@ -101,6 +101,8 @@ export class UsersService {
       password_hash: hashedPassword,
       full_name: dto.fullName,
       role: dto.role,
+      vehicle_number: dto.vehicle_number,
+      vehicle_type: dto.vehicle_type,
       ...(dto.hubId ? { hub: { id: dto.hubId } } : {}),
     });
 
@@ -224,8 +226,11 @@ export class UsersService {
     await this.usersRepository.save(user);
   }
 
-  async findAllUsers(): Promise<User[]> {
-    return this.usersRepository.find({
+  async findAllUsers(
+    page = 1,
+    limit = 10,
+  ): Promise<{ data: User[]; meta: any }> {
+    const [data, totalItems] = await this.usersRepository.findAndCount({
       relations: { hub: true },
       select: {
         id: true,
@@ -237,13 +242,54 @@ export class UsersService {
         status: true,
         created_at: true,
         updated_at: true,
+        vehicle_number: true,
+        vehicle_type: true,
         hub: {
           id: true,
           name: true,
         },
       },
       order: { created_at: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
+  }
+
+  async findDispatchShippers(hubId: string): Promise<any[]> {
+    const rawData = await this.usersRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect(
+        'shipments',
+        'shipment',
+        'shipment.shipperId = user.id AND shipment.status IN (:...statuses)',
+        { statuses: ['PENDING', 'IN_TRANSIT'] },
+      )
+      .where('user.role = :role', { role: 'SHIPPER' })
+      .andWhere('user.hubId = :hubId', { hubId })
+      .select([
+        'user.id AS id',
+        'user.full_name AS full_name',
+        'user.phone_number AS phone_number',
+        'user.vehicle_number AS vehicle_number',
+        'user.vehicle_type AS vehicle_type',
+        'user.is_online AS is_online',
+        'shipment.id AS current_shipment_id',
+        'shipment.status AS current_shipment_status',
+      ])
+      .getRawMany();
+
+    return rawData;
   }
 
   async adminUpdateUser(
@@ -255,6 +301,8 @@ export class UsersService {
       role?: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR' | 'CUSTOMER';
       hubId?: string;
       status?: string;
+      vehicle_number?: string;
+      vehicle_type?: string;
     },
   ): Promise<User> {
     const user = await this.usersRepository.findOne({
@@ -282,6 +330,9 @@ export class UsersService {
     if (dto.address !== undefined) user.address = dto.address;
     if (dto.role) user.role = dto.role;
     if (dto.status) user.status = dto.status;
+    if (dto.vehicle_number !== undefined)
+      user.vehicle_number = dto.vehicle_number;
+    if (dto.vehicle_type !== undefined) user.vehicle_type = dto.vehicle_type;
 
     if (dto.hubId !== undefined) {
       user.hub = dto.hubId ? ({ id: dto.hubId } as any) : null;

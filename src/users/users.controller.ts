@@ -9,6 +9,7 @@ import {
   Param,
   Delete,
   ForbiddenException,
+  Query,
 } from '@nestjs/common';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -97,8 +98,31 @@ export class UsersController {
   @Get()
   @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  async getAllUsers() {
-    return await this.usersService.findAllUsers();
+  async getAllUsers(@Query('page') page = 1, @Query('limit') limit = 10) {
+    const result = await this.usersService.findAllUsers(
+      Number(page),
+      Number(limit),
+    );
+    return {
+      message: 'Lấy danh sách người dùng thành công!',
+      data: result.data,
+      meta: result.meta,
+    };
+  }
+
+  @Get('dispatch-shippers')
+  @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async getDispatchShippers(
+    @Request() req: { user: { hubId: string; role: string } },
+    @Query('hubId') queryHubId?: string,
+  ) {
+    const targetHubId = req.user.role === 'ADMIN' ? queryHubId : req.user.hubId;
+    if (!targetHubId) {
+      throw new ForbiddenException('Vui lòng chọn bưu cục để điều phối');
+    }
+    const shippers = await this.usersService.findDispatchShippers(targetHubId);
+    return { data: shippers };
   }
 
   @Patch(':id')
@@ -115,6 +139,8 @@ export class UsersController {
       role?: Role;
       hubId?: string;
       status?: string;
+      vehicle_number?: string;
+      vehicle_type?: string;
     },
   ) {
     if (

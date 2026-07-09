@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { HubsService, CreateHubDto, UpdateHubDto } from './hubs.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -18,11 +19,15 @@ export class HubsController {
   constructor(private readonly hubsService: HubsService) {}
 
   @Get()
-  async getAllHubs() {
-    const hubs = await this.hubsService.findAllHubs();
+  async getAllHubs(@Query('page') page = 1, @Query('limit') limit = 10) {
+    const result = await this.hubsService.findAllHubs(
+      Number(page),
+      Number(limit),
+    );
     return {
       message: 'Lấy danh sách bưu cục thành công!',
-      data: hubs,
+      data: result.data,
+      meta: result.meta,
     };
   }
 

@@ -64,10 +64,23 @@ export class HubsService {
   }
 
   // Hàm lấy danh sách tất cả bưu cục
-  async findAllHubs(): Promise<Hub[]> {
-    return await this.hubsRepository.find({
+  async findAllHubs(page = 1, limit = 10): Promise<{ data: Hub[]; meta: any }> {
+    const [data, totalItems] = await this.hubsRepository.findAndCount({
       order: { created_at: 'DESC' }, // Sắp xếp bưu cục mới tạo lên đầu
+      skip: (page - 1) * limit,
+      take: limit,
     });
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   // Tìm bưu cục

@@ -27,8 +27,18 @@ export class LocationsController {
     @Query('hubId') hubId?: string,
     @Query('zone') zone?: string,
     @Query('status') status?: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
   ) {
-    return this.locationsService.findAll(hubId, zone, status);
+    return this.locationsService.findAll(
+      hubId,
+      zone,
+      status,
+      parseInt(page, 10),
+      parseInt(limit, 10),
+      search,
+    );
   }
 
   @Post()

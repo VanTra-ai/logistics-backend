@@ -29,4 +29,12 @@ export class CreateInternalUserDto {
   @IsString()
   @IsOptional()
   hubId?: string;
+
+  @IsString()
+  @IsOptional()
+  vehicle_number?: string;
+
+  @IsString()
+  @IsOptional()
+  vehicle_type?: string;
 }

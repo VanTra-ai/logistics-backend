@@ -23,6 +23,9 @@ export class OrderIncident {
   @Column()
   reason!: string;
 
+  @Column({ default: 'DELIVERY' }) // DELIVERY or WAREHOUSE
+  incident_type!: string;
+
   @Column('text')
   description!: string;
 

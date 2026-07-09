@@ -72,6 +72,12 @@ export class User {
   @ManyToOne(() => Hub, { nullable: true })
   hub!: Hub;
 
+  @Column({ nullable: true })
+  vehicle_number!: string;
+
+  @Column({ default: 'BIKE' })
+  vehicle_type!: string;
+
   @Column({ default: false })
   is_online!: boolean;
 
