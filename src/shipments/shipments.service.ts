@@ -248,6 +248,7 @@ export class ShipmentsService {
           );
         }
         order.shipment = shipment; // Liên kết đơn hàng vào chuyến xe
+        order.current_status = 'IN_TRANSIT'; // Đã đóng bao / Lên tải
       }
 
       // Lưu toàn bộ đơn hàng bằng Transaction
@@ -257,7 +258,7 @@ export class ShipmentsService {
       for (const order of orders) {
         await this.trackingsService.addTrackingRecord({
           order,
-          status: 'AT_HUB',
+          status: 'IN_TRANSIT',
           note: `Đơn hàng đã được xếp vào chuyến xe ${shipment.shipment_code || shipment.id} chuẩn bị lăn bánh.`,
         });
       }
@@ -318,14 +319,12 @@ export class ShipmentsService {
           );
 
           // Trạng thái đơn hàng dựa trên loại xe
-          order.current_status =
-            shipment.vehicle_type === 'TRUCK' ? 'IN_TRANSIT' : 'DELIVERING';
+          if (shipment.vehicle_type === 'BIKE') {
+            order.current_status = 'DELIVERING';
+          }
+          // Nếu là TRUCK, giữ nguyên IN_TRANSIT
 
-          // Rút hàng khỏi kệ (pick-out) khi xe bắt đầu chạy
-          await this.locationsService.removeOrderFromLocation(
-            order,
-            queryRunner.manager,
-          );
+          // Xóa dòng removeOrderFromLocation bị trùng lặp
 
           // Ghi nhận mốc luân chuyển hành trình
           await this.trackingsService.addTrackingRecord({
@@ -411,8 +410,9 @@ export class ShipmentsService {
       );
     }
 
-    // Gỡ liên kết
+    // Gỡ liên kết và trả về kho
     order.shipment = null as any;
+    order.current_status = 'AT_HUB';
     await this.dataSource.manager.save(order);
 
     // Ghi nhận mốc hành trình giải phóng đơn hàng

@@ -250,10 +250,6 @@ export class ReturnOrderDto {
 
 export class RetryOrderDto {
   @IsString()
-  @IsNotEmpty({ message: 'Bắt buộc phải chọn tài xế (shipper_id)!' })
-  shipper_id!: string;
-
-  @IsString()
   @IsNotEmpty({ message: 'Bắt buộc phải ghi chú lý do hẹn lại!' })
   note!: string;
 
@@ -415,6 +411,25 @@ export class OrdersService {
     return savedOrder;
   }
 
+  private validateStatus(current: string, next: string) {
+    const matrix: Record<string, string[]> = {
+      PENDING: ['ASSIGNED', 'AT_HUB', 'CANCELLED'],
+      ASSIGNED: ['PICKING', 'CANCELLED'],
+      PICKING: ['PICKED', 'FAILED'],
+      PICKED: ['AT_HUB'],
+      AT_HUB: ['IN_TRANSIT', 'CANCELLED'],
+      IN_TRANSIT: ['DELIVERING', 'AT_HUB', 'FAILED'],
+      DELIVERING: ['FINISHED', 'FAILED'],
+      FAILED: ['AT_HUB', 'RETURNING'],
+      RETURNING: ['RETURNED'],
+    };
+    if (matrix[current] && !matrix[current].includes(next)) {
+      throw new BadRequestException(
+        `Không thể chuyển trạng thái từ ${current} sang ${next}`,
+      );
+    }
+  }
+
   async updateOrderStatus(
     id: string,
     data: UpdateOrderStatusDto,
@@ -452,6 +467,14 @@ export class OrdersService {
           'Không thể cập nhật trực tiếp trạng thái đơn hàng sang FINISHED thông qua API này. Vui lòng sử dụng tính năng hoàn thành đơn hàng chuyên biệt để chốt tài chính!',
         );
       }
+
+      if (data.status === 'IN_TRANSIT' || data.status === 'DELIVERING') {
+        throw new BadRequestException(
+          'Trạng thái IN_TRANSIT và DELIVERING không được phép cập nhật thủ công qua API lẻ. Phải được kích hoạt tự động qua Chuyến xe (Shipment).',
+        );
+      }
+
+      this.validateStatus(order.current_status, data.status);
 
       order.current_status = data.status;
 
@@ -1122,35 +1145,22 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
-    if (order.current_status !== 'AT_HUB') {
+    if (order.current_status !== 'FAILED') {
       throw new BadRequestException(
-        'Chỉ có thể giao lại đơn hàng đang lưu kho (AT_HUB)!',
+        'Chỉ có thể giao lại đơn hàng đang ở trạng thái sự cố (FAILED)!',
       );
     }
 
-    const shipper = await this.usersRepository.findOne({
-      where: { id: data.shipper_id },
-    });
-    if (!shipper || shipper.role !== 'SHIPPER') {
-      throw new BadRequestException('ID Shipper nhận bàn giao không hợp lệ!');
-    }
-
-    // Cập nhật trạng thái và bàn giao cho Shipper mới (hoặc cũ)
-    order.current_status = 'DELIVERING';
-    order.shipper = shipper;
-    await this.locationsService.removeOrderFromLocation(
-      order,
-      this.dataSource.manager,
-    );
+    // Cập nhật trạng thái về AT_HUB để chờ gom nhóm lại
+    order.current_status = 'AT_HUB';
+    order.shipper = null as any; // Xóa thông tin shipper cũ
 
     const savedOrder = await this.ordersRepository.save(order);
 
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
-      status: 'DELIVERING',
-      note:
-        data.note ||
-        `Đơn hàng được xuất kho để giao lại lần nữa. Bàn giao cho: ${shipper.full_name}. Thao tác bởi: ${actorName}`,
+      status: 'AT_HUB',
+      note: `Đơn hàng được yêu cầu giao lại. Thao tác bởi: ${actorName}`,
     });
 
     return savedOrder;
@@ -1168,18 +1178,14 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
-    if (order.current_status !== 'AT_HUB') {
+    if (order.current_status !== 'FAILED') {
       throw new BadRequestException(
-        'Chỉ có thể chuyển hoàn đơn hàng đang lưu kho (AT_HUB)!',
+        'Chỉ có thể chuyển hoàn đơn hàng đang ở trạng thái sự cố (FAILED)!',
       );
     }
 
-    // Chốt trạng thái hoàn vĩnh viễn
-    order.current_status = 'RETURNED_TO_SENDER';
-    await this.locationsService.removeOrderFromLocation(
-      order,
-      this.dataSource.manager,
-    );
+    // Chuyển sang trạng thái chuyển hoàn
+    order.current_status = 'RETURNING';
 
     const savedOrder = await this.ordersRepository.save(order);
 
@@ -1187,7 +1193,7 @@ export class OrdersService {
     const noteReason = data.reason ? ` Lý do: ${data.reason}` : '';
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
-      status: 'RETURNED_TO_SENDER',
+      status: 'RETURNING',
       note: `Đơn hàng xuất kho, chuyển hoàn về cho người gửi.${noteReason} Thao tác bởi: ${actorName}`,
     });
 
