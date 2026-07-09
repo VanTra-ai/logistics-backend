@@ -110,6 +110,24 @@ export class TicketsService {
     });
   }
 
+  async getAllTickets(currentUser: {
+    role?: string;
+    hubId?: string;
+  }): Promise<Ticket[]> {
+    if (currentUser.role === 'HUB_COORDINATOR') {
+      return await this.ticketsRepository.find({
+        where: { order: { pickup_hub: { id: currentUser.hubId } } },
+        relations: { order: { pickup_hub: true }, customer: true },
+        order: { created_at: 'DESC' },
+      });
+    }
+
+    return await this.ticketsRepository.find({
+      relations: { order: { pickup_hub: true }, customer: true },
+      order: { created_at: 'DESC' },
+    });
+  }
+
   async resolveTicket(
     ticketId: string,
     data: ResolveTicketDto,
@@ -162,6 +180,7 @@ export class TicketsService {
     ticketId: string,
     userId: string,
     message: string,
+    isStaff: boolean,
     attachments?: string[],
   ): Promise<TicketComment> {
     const ticket = await this.ticketsRepository.findOne({
@@ -173,6 +192,7 @@ export class TicketsService {
       ticket: { id: ticketId },
       user: { id: userId },
       message,
+      is_staff: isStaff,
       attachments: attachments || [],
     });
 

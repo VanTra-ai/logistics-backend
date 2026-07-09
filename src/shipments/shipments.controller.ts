@@ -99,4 +99,11 @@ export class ShipmentsController {
   async deleteShipment(@Param('id') id: string) {
     return await this.shipmentsService.deleteShipment(id);
   }
+
+  @Patch(':id/cancel')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async cancelShipment(@Param('id') id: string) {
+    return await this.shipmentsService.cancelShipment(id);
+  }
 }

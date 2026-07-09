@@ -31,6 +31,7 @@ import {
   RtsOrderDto,
   RemitOrdersDto,
   UpdateOrderDto,
+  UpdateDimensionsDto,
 } from './orders.service';
 import { LabelService } from './label.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -390,6 +391,27 @@ export class OrdersController {
     return {
       message: 'Nộp tiền COD về bưu cục thành công!',
       data: result,
+    };
+  }
+
+  @Patch(':id/dimensions')
+  @Roles('ADMIN', 'HUB_COORDINATOR', 'STATION_STAFF') // Station staff and above can edit weight
+  @UseGuards(RolesGuard)
+  async updateDimensions(
+    @Param('id') id: string,
+    @Body() updateDimensionsDto: UpdateDimensionsDto,
+    @Request() req: { user: { role: string } },
+  ) {
+    const actor = req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Nhân viên';
+    const order = await this.ordersService.updateDimensions(
+      id,
+      updateDimensionsDto,
+      actor,
+    );
+
+    return {
+      message: 'Cập nhật thông số đơn hàng thành công!',
+      data: order,
     };
   }
 

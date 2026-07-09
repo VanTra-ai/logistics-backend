@@ -27,6 +27,10 @@ export class Shipment {
   @Column({ nullable: true })
   vehicle_number!: string;
 
+  // Loại phương tiện: BIKE hoặc TRUCK
+  @Column({ default: 'TRUCK' })
+  vehicle_type!: string;
+
   @Column({
     type: 'decimal',
     precision: 10,

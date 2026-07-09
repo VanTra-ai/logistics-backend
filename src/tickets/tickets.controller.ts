@@ -22,6 +22,19 @@ import { Roles } from '../common/decorators/roles.decorator';
 export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
+  @Get()
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(RolesGuard)
+  async getAllTickets(
+    @Request() req: { user: { role?: string; hubId?: string } },
+  ) {
+    const tickets = await this.ticketsService.getAllTickets(req.user);
+    return {
+      message: 'Tra cứu danh sách khiếu nại thành công!',
+      data: tickets,
+    };
+  }
+
   @Get('me')
   @Roles('CUSTOMER')
   @UseGuards(RolesGuard)
@@ -77,12 +90,15 @@ export class TicketsController {
     @Param('id') id: string,
     @Body('message') message: string,
     @Body('attachments') attachments: string[],
-    @Request() req: { user: { userId: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
+    const isStaff =
+      req.user.role === 'ADMIN' || req.user.role === 'HUB_COORDINATOR';
     const comment = await this.ticketsService.addComment(
       id,
       req.user.userId,
       message,
+      isStaff,
       attachments,
     );
     return {

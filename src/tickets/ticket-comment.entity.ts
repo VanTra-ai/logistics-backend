@@ -19,6 +19,9 @@ export class TicketComment {
   @ManyToOne(() => User)
   user!: User;
 
+  @Column({ default: false })
+  is_staff!: boolean;
+
   @Column('text')
   message!: string;
 

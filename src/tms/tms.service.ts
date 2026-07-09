@@ -4,6 +4,7 @@ import { RouteOptimizationService } from './route-optimization.service';
 import { User } from '../users/user.entity';
 import { Order } from '../orders/order.entity';
 import { Shipment } from '../shipments/shipment.entity';
+import { LocationsService } from '../locations/locations.service';
 
 export class ConfirmDispatchDto {
   virtualShipments!: {
@@ -22,6 +23,7 @@ export class TmsService {
   constructor(
     private dataSource: DataSource,
     private routeOptimizationService: RouteOptimizationService,
+    private locationsService: LocationsService,
   ) {}
 
   // Helper distance function
@@ -185,7 +187,8 @@ export class TmsService {
 
         const shipment = queryRunner.manager.create(Shipment, {
           shipper: shipper,
-          capacity_weight: 1000,
+          vehicle_type: 'BIKE',
+          capacity_weight: 50,
           status: 'IN_TRANSIT',
         });
         const savedShipment = await queryRunner.manager.save(shipment);
@@ -195,16 +198,21 @@ export class TmsService {
           id: In(orderIds),
         });
 
-        orders.forEach((order) => {
+        for (const order of orders) {
           order.shipment = savedShipment;
           order.shipper = shipper;
+          order.current_status = 'DELIVERING';
           const vo = vs.orders.find(
             (o: { id: string; delivery_sequence: number }) => o.id === order.id,
           );
           if (vo) {
             order.delivery_sequence = vo.delivery_sequence;
           }
-        });
+          await this.locationsService.removeOrderFromLocation(
+            order,
+            queryRunner.manager,
+          );
+        }
 
         await queryRunner.manager.save(Order, orders);
         dispatchedShipments++;

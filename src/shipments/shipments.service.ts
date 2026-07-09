@@ -40,6 +40,11 @@ export class UpdateShipmentDto {
   @IsOptional()
   shipper_id?: string;
 
+  @IsString()
+  @IsOptional()
+  @IsIn(['BIKE', 'TRUCK'])
+  vehicle_type?: string;
+
   @IsOptional()
   @IsString()
   destination_hub_id?: string;
@@ -57,6 +62,11 @@ export class CreateShipmentDto {
   @IsString()
   @IsNotEmpty({ message: 'Bắt buộc phải chọn tài xế (shipper_id)!' })
   shipper_id!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Bắt buộc phải có loại phương tiện (vehicle_type)!' })
+  @IsIn(['BIKE', 'TRUCK'])
+  vehicle_type!: string;
 
   @IsString()
   @IsNotEmpty({ message: 'Bắt buộc phải có trạm xuất phát (origin_hub_id)!' })
@@ -143,6 +153,12 @@ export class ShipmentsService {
     let destinationHub: Hub | undefined = undefined;
 
     if (data.destination_hub_id) {
+      if (data.vehicle_type === 'BIKE') {
+        throw new BadRequestException(
+          'Xe máy giao hàng (BIKE) không được chọn bưu cục đích đến!',
+        );
+      }
+
       const foundHub = await this.hubsRepository.findOne({
         where: { id: data.destination_hub_id },
       });
@@ -150,6 +166,12 @@ export class ShipmentsService {
 
       // Gán giá trị tìm được
       destinationHub = foundHub;
+    } else {
+      if (data.vehicle_type === 'TRUCK') {
+        throw new BadRequestException(
+          'Chuyến xe tải luân chuyển (TRUCK) bắt buộc phải có bưu cục đích đến!',
+        );
+      }
     }
 
     const shipmentCode = await this.generateShipmentCode();
@@ -159,6 +181,7 @@ export class ShipmentsService {
       shipper,
       origin_hub: originHub,
       destination_hub: destinationHub,
+      vehicle_type: data.vehicle_type,
       vehicle_number: data.vehicle_number,
       capacity_weight:
         data.capacity_weight !== undefined
@@ -288,10 +311,15 @@ export class ShipmentsService {
             continue;
           }
 
-          // Nếu có bưu cục đích -> Luân chuyển kho. Nếu không -> Đi giao trực tiếp cho khách.
-          order.current_status = shipment.destination_hub
-            ? 'IN_TRANSIT'
-            : 'DELIVERING';
+          // Rút hàng khỏi kệ (pick-out) khi xe bắt đầu chạy
+          await this.locationsService.removeOrderFromLocation(
+            order,
+            queryRunner.manager,
+          );
+
+          // Trạng thái đơn hàng dựa trên loại xe
+          order.current_status =
+            shipment.vehicle_type === 'TRUCK' ? 'IN_TRANSIT' : 'DELIVERING';
 
           // Rút hàng khỏi kệ (pick-out) khi xe bắt đầu chạy
           await this.locationsService.removeOrderFromLocation(
@@ -303,9 +331,10 @@ export class ShipmentsService {
           await this.trackingsService.addTrackingRecord({
             order,
             status: order.current_status,
-            note: shipment.destination_hub
-              ? `Chuyến xe luân chuyển ${shipment.shipment_code} đã khởi hành từ ${shipment.origin_hub?.name || 'bưu cục gửi'} đi bưu cục ${shipment.destination_hub.name}.`
-              : `Chuyến xe giao hàng trực tiếp ${shipment.shipment_code} đã lăn bánh đi giao tới người nhận.`,
+            note:
+              shipment.vehicle_type === 'TRUCK'
+                ? `Chuyến xe luân chuyển ${shipment.shipment_code} đã khởi hành từ ${shipment.origin_hub?.name || 'bưu cục gửi'} đi bưu cục ${shipment.destination_hub?.name || 'đích'}.`
+                : `Chuyến xe giao hàng trực tiếp ${shipment.shipment_code} đã lăn bánh đi giao tới người nhận.`,
           });
         }
       }
@@ -320,16 +349,18 @@ export class ShipmentsService {
             continue;
           }
 
-          order.current_status = 'AT_HUB';
-          // Gỡ bỏ liên kết chuyến xe vì hàng đã xuống bãi
-          order.shipment = null as any;
+          if (shipment.vehicle_type === 'TRUCK') {
+            order.current_status = 'AT_HUB';
+            // Gỡ bỏ liên kết chuyến xe vì hàng đã xuống bãi
+            order.shipment = null as any;
 
-          // Ghi nhận mốc hạ tải hành trình
-          await this.trackingsService.addTrackingRecord({
-            order,
-            status: 'AT_HUB',
-            note: `Chuyến xe luân chuyển ${shipment.shipment_code} đã hoàn thành cập bến. Đơn hàng đã hạ tải nhập kho bưu cục ${shipment.destination_hub?.name || 'đích'}.`,
-          });
+            // Ghi nhận mốc hạ tải hành trình
+            await this.trackingsService.addTrackingRecord({
+              order,
+              status: 'AT_HUB',
+              note: `Chuyến xe luân chuyển ${shipment.shipment_code} đã hoàn thành cập bến. Đơn hàng đã hạ tải nhập kho bưu cục ${shipment.destination_hub?.name || 'đích'}.`,
+            });
+          }
         }
       }
 
@@ -497,6 +528,50 @@ export class ShipmentsService {
       await queryRunner.manager.remove(shipment);
       await queryRunner.commitTransaction();
       return { message: 'Xóa chuyến xe thành công!' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async cancelShipment(id: string) {
+    const shipment = await this.shipmentsRepository.findOne({
+      where: { id },
+      relations: { orders: true },
+    });
+    if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
+
+    if (shipment.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Chỉ có thể hủy chuyến xe chưa lăn bánh (PENDING)!',
+      );
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      if (shipment.orders && shipment.orders.length > 0) {
+        for (const order of shipment.orders) {
+          order.shipment = null as any;
+          await queryRunner.manager.save(order);
+
+          await this.trackingsService.addTrackingRecord({
+            order,
+            status: 'AT_HUB',
+            note: `Hủy chuyến xe ${shipment.shipment_code || shipment.id} do sự cố. Đơn hàng được giải phóng quay lại kho bãi.`,
+          });
+        }
+      }
+
+      shipment.status = 'CANCELLED';
+      await queryRunner.manager.save(shipment);
+
+      await queryRunner.commitTransaction();
+      return { message: 'Hủy chuyến xe thành công!' };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;

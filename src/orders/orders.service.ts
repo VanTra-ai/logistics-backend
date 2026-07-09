@@ -249,12 +249,41 @@ export class ReturnOrderDto {
 
 export class RetryOrderDto {
   @IsString()
-  @IsNotEmpty({ message: 'Bắt buộc phải chọn Shipper để đi giao lại!' })
+  @IsNotEmpty({ message: 'Bắt buộc phải chọn tài xế (shipper_id)!' })
   shipper_id!: string;
 
-  @IsOptional()
   @IsString()
-  note?: string;
+  @IsNotEmpty({ message: 'Bắt buộc phải ghi chú lý do hẹn lại!' })
+  note!: string;
+
+  @IsOptional()
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @IsNumber()
+  long?: number;
+}
+
+export class UpdateDimensionsDto {
+  @IsNumber()
+  @Min(0.01, { message: 'Cân nặng phải lớn hơn 0' })
+  weight!: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  length?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  height?: number;
 }
 
 export class RtsOrderDto {
@@ -695,7 +724,7 @@ export class OrdersService {
       }
 
       // 2. Lọc ra những đơn hàng đủ điều kiện nhập kho
-      const validStatuses = ['PENDING', 'PICKING', 'PICKED'];
+      const validStatuses = ['PENDING', 'PICKING', 'PICKED', 'RETURNING'];
       const validOrders = orders.filter((order) =>
         validStatuses.includes(order.current_status),
       );
@@ -706,8 +735,12 @@ export class OrdersService {
         );
       }
 
+      // Map to store original statuses to flag `is_return`
+      const originalStatuses = new Map<string, string>();
+
       // 3. Cập nhật trạng thái đồng loạt sang AT_HUB
       for (const order of validOrders) {
+        originalStatuses.set(order.id, order.current_status);
         order.current_status = 'AT_HUB';
       }
 
@@ -739,6 +772,7 @@ export class OrdersService {
               ? 'Khu vực A (Dưới 5kg)'
               : 'Khu vực B (Từ 5kg)',
           hub_name: o.pickup_hub?.name || 'Vô danh',
+          is_return: originalStatuses.get(o.id) === 'RETURNING',
         })),
       };
     });
@@ -1327,6 +1361,62 @@ export class OrdersService {
 
       await manager.softRemove(order);
       return { message: 'Xóa đơn hàng thành công!' };
+    });
+  }
+
+  async updateDimensions(
+    orderId: string,
+    data: UpdateDimensionsDto,
+    actorName: string,
+  ) {
+    return await this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, { where: { id: orderId } });
+      if (!order) {
+        throw new NotFoundException('Không tìm thấy đơn hàng!');
+      }
+
+      const oldFee = Number(order.shipping_fee) || 0;
+      const oldWeight = Number(order.weight) || 0;
+
+      // Tính lại cước
+      const tariff = await this.financeService.getTariff();
+      const length = data.length || 0;
+      const width = data.width || 0;
+      const height = data.height || 0;
+      const bulkWeight = (length * width * height) / 5000;
+      const chargeableWeight = Math.max(data.weight, bulkWeight);
+
+      const distance = 5; // Ước lượng mặc định như khi tạo đơn
+      const extraDistance = Math.max(
+        0,
+        distance - Number(tariff.base_distance_limit),
+      );
+      const baseShippingPrice =
+        Number(tariff.base_price_distance) +
+        extraDistance * Number(tariff.block_price_distance);
+      const newFee =
+        baseShippingPrice + Math.max(0, chargeableWeight - 2) * 5000;
+
+      order.weight = data.weight;
+      order.length = length;
+      order.width = width;
+      order.height = height;
+      order.shipping_fee = newFee;
+
+      const savedOrder = await manager.save(Order, order);
+
+      // Nếu cước phí thay đổi, ghi chú vào log (có thể dùng chung order.status.changed hoặc lưu audit)
+      if (newFee !== oldFee) {
+        const diff = newFee - oldFee;
+        await this.eventEmitter.emitAsync('order.status.changed', {
+          manager,
+          order: savedOrder,
+          status: savedOrder.current_status,
+          note: `Thay đổi thông số đơn hàng bởi ${actorName}. Cân nặng: ${oldWeight}kg -> ${data.weight}kg. Cước phí thay đổi: ${diff > 0 ? '+' : ''}${diff.toLocaleString('vi-VN')}đ.`,
+        });
+      }
+
+      return savedOrder;
     });
   }
 }
