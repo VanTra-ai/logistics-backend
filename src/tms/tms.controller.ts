@@ -1,5 +1,5 @@
 import { Controller, Post, UseGuards, Body } from '@nestjs/common';
-import { TmsService, ConfirmDispatchDto } from './tms.service';
+import { TmsService } from './tms.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -19,7 +19,9 @@ export class TmsController {
   @Post('confirm-dispatch')
   @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  async confirmDispatch(@Body() confirmDispatchDto: ConfirmDispatchDto) {
-    return await this.tmsService.confirmDispatch(confirmDispatchDto);
+  async confirmDispatch(
+    @Body() confirmDispatchDto: { virtualShipments: any[] },
+  ) {
+    return this.tmsService.confirmDispatch(confirmDispatchDto);
   }
 }

@@ -62,10 +62,20 @@ export class LocationsService {
 
   async putaway(orderId: string, barcode: string) {
     return await this.dataSource.transaction(async (manager) => {
+      const locationLock = await manager.findOne(Location, {
+        where: { barcode },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!locationLock) {
+        throw new NotFoundException(
+          'Không tìm thấy vị trí kệ hàng với mã vạch này',
+        );
+      }
+
       const location = await manager.findOne(Location, {
         where: { barcode },
         relations: { orders: true, hub: true },
-        lock: { mode: 'pessimistic_write' },
       });
 
       if (!location) {
@@ -127,10 +137,14 @@ export class LocationsService {
     if (!order.location) return;
 
     // Load full location with orders to calculate capacity
+    await manager.findOne(Location, {
+      where: { id: order.location.id },
+      lock: { mode: 'pessimistic_write' },
+    });
+
     const location = await manager.findOne(Location, {
       where: { id: order.location.id },
       relations: { orders: true },
-      lock: { mode: 'pessimistic_write' },
     });
 
     if (location) {

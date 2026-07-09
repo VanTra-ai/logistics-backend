@@ -197,7 +197,10 @@ export class TmsService {
 
         orders.forEach((order) => {
           order.shipment = savedShipment;
-          const vo = vs.orders.find((o) => o.id === order.id);
+          order.shipper = shipper;
+          const vo = vs.orders.find(
+            (o: { id: string; delivery_sequence: number }) => o.id === order.id,
+          );
           if (vo) {
             order.delivery_sequence = vo.delivery_sequence;
           }

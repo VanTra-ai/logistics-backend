@@ -381,7 +381,6 @@ export class OrdersService {
       const order = await manager.findOne(Order, {
         where: { id },
         relations: { shipper: true },
-        lock: { mode: 'pessimistic_write' },
       });
 
       if (!order) {
@@ -663,7 +662,6 @@ export class OrdersService {
       const orders = await manager.find(Order, {
         where: { tracking_number: In(trackingNumbers) },
         relations: { pickup_hub: true },
-        lock: { mode: 'pessimistic_write' },
       });
 
       if (orders.length === 0) {
@@ -763,7 +761,6 @@ export class OrdersService {
       const orders = await manager.find(Order, {
         where: { tracking_number: In(trackingNumbers) },
         relations: { pickup_hub: true, location: true },
-        lock: { mode: 'pessimistic_write' },
       });
 
       if (orders.length === 0) {
@@ -842,6 +839,7 @@ export class OrdersService {
   async completeOrder(
     orderId: string,
     shipperId: string,
+    role: string,
     data: CompleteOrderDto,
   ): Promise<Order> {
     const queryRunner = this.dataSource.createQueryRunner();
@@ -853,7 +851,6 @@ export class OrdersService {
       const order = await queryRunner.manager.findOne(Order, {
         where: { id: orderId },
         relations: { shipper: true, pickup_hub: true },
-        lock: { mode: 'pessimistic_write' },
       });
 
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
@@ -866,11 +863,14 @@ export class OrdersService {
       }
 
       // Chốt chặn 2: Bảo mật phân quyền Shipper
-      if (!order.shipper || order.shipper.id !== shipperId) {
-        throw new BadRequestException(
-          'Bạn không có quyền thao tác trên đơn hàng của người khác!',
-        );
+      if (role !== 'ADMIN') {
+        if (!order.shipper || order.shipper.id !== shipperId) {
+          throw new BadRequestException(
+            'Bạn không có quyền thao tác trên đơn hàng của người khác!',
+          );
+        }
       }
+      const actualShipperId = order.shipper ? order.shipper.id : shipperId;
 
       // Cập nhật dữ liệu
       order.current_status = 'FINISHED';
@@ -889,12 +889,11 @@ export class OrdersService {
 
       // 1. Cộng chiết khấu cho Tài xế (Shipper Payout)
       let shipperWallet = await queryRunner.manager.findOne(Wallet, {
-        where: { user: { id: shipperId } },
-        lock: { mode: 'pessimistic_write' },
+        where: { user: { id: actualShipperId } },
       });
       if (!shipperWallet) {
         const user = await queryRunner.manager.findOne(User, {
-          where: { id: shipperId },
+          where: { id: actualShipperId },
         });
         if (!user)
           throw new NotFoundException('Không tìm thấy tài xế để tạo ví!');
@@ -953,7 +952,6 @@ export class OrdersService {
         if (hubCoordinator) {
           let hubWallet = await queryRunner.manager.findOne(Wallet, {
             where: { user: { id: hubCoordinator.id } },
-            lock: { mode: 'pessimistic_write' },
           });
           if (!hubWallet) {
             hubWallet = queryRunner.manager.create(Wallet, {
@@ -1148,7 +1146,6 @@ export class OrdersService {
       const orders = await queryRunner.manager.find(Order, {
         where: { id: In(orderIds) },
         relations: { shipper: true },
-        lock: { mode: 'pessimistic_write' },
       });
 
       if (orders.length === 0) {
@@ -1180,7 +1177,6 @@ export class OrdersService {
         if (order.shipper) {
           const shipperWallet = await queryRunner.manager.findOne(Wallet, {
             where: { user: { id: order.shipper.id } },
-            lock: { mode: 'pessimistic_write' },
           });
           if (shipperWallet) {
             shipperWallet.cod_debt = Math.max(
@@ -1237,7 +1233,6 @@ export class OrdersService {
       const order = await manager.findOne(Order, {
         where: { id },
         relations: { pickup_hub: true },
-        lock: { mode: 'pessimistic_write' },
       });
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
@@ -1309,7 +1304,6 @@ export class OrdersService {
     return await this.ordersRepository.manager.transaction(async (manager) => {
       const order = await manager.findOne(Order, {
         where: { id },
-        lock: { mode: 'pessimistic_write' },
       });
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 

@@ -288,16 +288,17 @@ export class OrdersController {
   }
 
   @Patch(':id/complete')
-  @Roles('SHIPPER') // API này CHỈ DÀNH CHO SHIPPER
+  @Roles('SHIPPER', 'ADMIN') // API này CHO PHÉP ADMIN CẬP NHẬT ĐỂ TEST
   @UseGuards(RolesGuard)
   async completeOrder(
     @Param('id') id: string,
     @Body() completeOrderDto: CompleteOrderDto,
-    @Request() req: { user: { userId: string } }, // userId chính là shipperId
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const order = await this.ordersService.completeOrder(
       id,
       req.user.userId,
+      req.user.role,
       completeOrderDto,
     );
 
