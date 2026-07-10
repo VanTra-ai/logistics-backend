@@ -16,7 +16,10 @@ export class OrdersExcelService {
    * Import đơn hàng từ file Excel/CSV.
    * Yêu cầu: Sử dụng Database Transaction để rollback nếu có lỗi ở bất kỳ dòng nào.
    */
-  async importOrders(fileBuffer: Buffer): Promise<Order[]> {
+  async importOrders(
+    fileBuffer: Buffer,
+    user?: { role: string; hubId?: string },
+  ): Promise<Order[]> {
     const workbook = new exceljs.Workbook();
     try {
       await workbook.xlsx.load(fileBuffer as unknown as ArrayBuffer);
@@ -37,25 +40,119 @@ export class OrdersExcelService {
     const rowErrors: { row: number; errors: string[] }[] = [];
     const ordersToCreate: Partial<Order>[] = [];
 
+    let pickup_hub: any = null;
+    if (user?.role === 'HUB_COORDINATOR' && user.hubId) {
+      pickup_hub = { id: user.hubId };
+    }
+
     // Header được giả định nằm ở dòng 1.
+    const colMap = {
+      tracking: -1,
+      sender_name: -1,
+      sender_phone: -1,
+      sender_address: -1,
+      receiver_name: -1,
+      receiver_phone: -1,
+      receiver_address: -1,
+      weight: -1,
+      cod: -1,
+    };
+    worksheet.getRow(1).eachCell((cell, colNumber) => {
+      const header = cell.text?.toLowerCase().trim() || '';
+      if (header.includes('mã')) colMap.tracking = colNumber;
+      else if (
+        header.includes('người gửi') ||
+        header.includes('tên gửi') ||
+        header.includes('họ tên gửi')
+      )
+        colMap.sender_name = colNumber;
+      else if (
+        header.includes('sđt gửi') ||
+        header.includes('sdt gửi') ||
+        header.includes('điện thoại gửi')
+      )
+        colMap.sender_phone = colNumber;
+      else if (header.includes('địa chỉ gửi'))
+        colMap.sender_address = colNumber;
+      else if (
+        header.includes('người nhận') ||
+        header.includes('tên nhận') ||
+        header.includes('họ tên nhận')
+      )
+        colMap.receiver_name = colNumber;
+      else if (
+        header.includes('sđt nhận') ||
+        header.includes('sdt nhận') ||
+        header.includes('điện thoại nhận')
+      )
+        colMap.receiver_phone = colNumber;
+      else if (header.includes('địa chỉ nhận'))
+        colMap.receiver_address = colNumber;
+      else if (header.includes('khối lượng') || header.includes('cân nặng'))
+        colMap.weight = colNumber;
+      else if (header.includes('cod') || header.includes('thu hộ'))
+        colMap.cod = colNumber;
+    });
+
+    // Fallback if no matching headers found, assume standard format (either 9 or 8 columns)
+    if (colMap.sender_name === -1) {
+      const hasTracking = colMap.tracking !== -1;
+      colMap.sender_name = hasTracking ? 2 : 1;
+      colMap.sender_phone = hasTracking ? 3 : 2;
+      colMap.sender_address = hasTracking ? 4 : 3;
+      colMap.receiver_name = hasTracking ? 5 : 4;
+      colMap.receiver_phone = hasTracking ? 6 : 5;
+      colMap.receiver_address = hasTracking ? 7 : 6;
+      colMap.weight = hasTracking ? 8 : 7;
+      colMap.cod = hasTracking ? 9 : 8;
+    }
 
     worksheet.eachRow((row, rowNumber) => {
       // Bỏ qua dòng tiêu đề
       if (rowNumber === 1) return;
 
-      const tracking_number = row.getCell(1).text?.trim();
-      const sender_name = row.getCell(2).text?.trim();
-      const sender_phone = row.getCell(3).text?.trim();
-      const sender_address = row.getCell(4).text?.trim();
-      const receiver_name = row.getCell(5).text?.trim();
-      const receiver_phone = row.getCell(6).text?.trim();
-      const receiver_address = row.getCell(7).text?.trim();
-      const weightStr = row.getCell(8).text?.trim();
-      const codStr = row.getCell(9).text?.trim();
+      let tracking_number =
+        colMap.tracking !== -1 ? row.getCell(colMap.tracking).text?.trim() : '';
+      if (!tracking_number) {
+        const prefix = 'VN';
+        const year = new Date().getFullYear().toString();
+        const randomChars = Math.random()
+          .toString(36)
+          .substring(2, 7)
+          .toUpperCase();
+        tracking_number = `${prefix}${year}${randomChars}`;
+      }
+
+      const sender_name =
+        colMap.sender_name > 0
+          ? row.getCell(colMap.sender_name).text?.trim()
+          : '';
+      const sender_phone =
+        colMap.sender_phone > 0
+          ? row.getCell(colMap.sender_phone).text?.trim()
+          : '';
+      const sender_address =
+        colMap.sender_address > 0
+          ? row.getCell(colMap.sender_address).text?.trim()
+          : '';
+      const receiver_name =
+        colMap.receiver_name > 0
+          ? row.getCell(colMap.receiver_name).text?.trim()
+          : '';
+      const receiver_phone =
+        colMap.receiver_phone > 0
+          ? row.getCell(colMap.receiver_phone).text?.trim()
+          : '';
+      const receiver_address =
+        colMap.receiver_address > 0
+          ? row.getCell(colMap.receiver_address).text?.trim()
+          : '';
+      const weightStr =
+        colMap.weight > 0 ? row.getCell(colMap.weight).text?.trim() : '';
+      const codStr = colMap.cod > 0 ? row.getCell(colMap.cod).text?.trim() : '';
 
       const rowErrorDetails: string[] = [];
 
-      if (!tracking_number) rowErrorDetails.push('Thiếu Mã vận đơn');
       if (!sender_name) rowErrorDetails.push('Thiếu Người gửi');
       if (!sender_phone) rowErrorDetails.push('Thiếu SĐT gửi');
       if (!sender_address) rowErrorDetails.push('Thiếu Địa chỉ gửi');
@@ -94,6 +191,7 @@ export class OrdersExcelService {
               : 0,
           current_status: 'PENDING',
           cod_status: 'PENDING',
+          pickup_hub,
         });
       }
     });
@@ -171,23 +269,112 @@ export class OrdersExcelService {
     const rowErrors: { row: number; errors: string[] }[] = [];
     const ordersToCreate: Partial<Order>[] = [];
 
+    const colMap = {
+      tracking: -1,
+      sender_name: -1,
+      sender_phone: -1,
+      sender_address: -1,
+      receiver_name: -1,
+      receiver_phone: -1,
+      receiver_address: -1,
+      weight: -1,
+      cod: -1,
+    };
+    worksheet.getRow(1).eachCell((cell, colNumber) => {
+      const header = cell.text?.toLowerCase().trim() || '';
+      if (header.includes('mã')) colMap.tracking = colNumber;
+      else if (
+        header.includes('người gửi') ||
+        header.includes('tên gửi') ||
+        header.includes('họ tên gửi')
+      )
+        colMap.sender_name = colNumber;
+      else if (
+        header.includes('sđt gửi') ||
+        header.includes('sdt gửi') ||
+        header.includes('điện thoại gửi')
+      )
+        colMap.sender_phone = colNumber;
+      else if (header.includes('địa chỉ gửi'))
+        colMap.sender_address = colNumber;
+      else if (
+        header.includes('người nhận') ||
+        header.includes('tên nhận') ||
+        header.includes('họ tên nhận')
+      )
+        colMap.receiver_name = colNumber;
+      else if (
+        header.includes('sđt nhận') ||
+        header.includes('sdt nhận') ||
+        header.includes('điện thoại nhận')
+      )
+        colMap.receiver_phone = colNumber;
+      else if (header.includes('địa chỉ nhận'))
+        colMap.receiver_address = colNumber;
+      else if (header.includes('khối lượng') || header.includes('cân nặng'))
+        colMap.weight = colNumber;
+      else if (header.includes('cod') || header.includes('thu hộ'))
+        colMap.cod = colNumber;
+    });
+
+    if (colMap.sender_name === -1) {
+      const hasTracking = colMap.tracking !== -1;
+      colMap.sender_name = hasTracking ? 2 : 1;
+      colMap.sender_phone = hasTracking ? 3 : 2;
+      colMap.sender_address = hasTracking ? 4 : 3;
+      colMap.receiver_name = hasTracking ? 5 : 4;
+      colMap.receiver_phone = hasTracking ? 6 : 5;
+      colMap.receiver_address = hasTracking ? 7 : 6;
+      colMap.weight = hasTracking ? 8 : 7;
+      colMap.cod = hasTracking ? 9 : 8;
+    }
+
     worksheet.eachRow((row, rowNumber) => {
       // Bỏ qua dòng tiêu đề
       if (rowNumber === 1) return;
 
-      const tracking_number = row.getCell(1).text?.trim();
-      const sender_name = row.getCell(2).text?.trim();
-      const sender_phone = row.getCell(3).text?.trim();
-      const sender_address = row.getCell(4).text?.trim();
-      const receiver_name = row.getCell(5).text?.trim();
-      const receiver_phone = row.getCell(6).text?.trim();
-      const receiver_address = row.getCell(7).text?.trim();
-      const weightStr = row.getCell(8).text?.trim();
-      const codStr = row.getCell(9).text?.trim();
+      let tracking_number =
+        colMap.tracking !== -1 ? row.getCell(colMap.tracking).text?.trim() : '';
+      if (!tracking_number) {
+        const prefix = 'VN';
+        const year = new Date().getFullYear().toString();
+        const randomChars = Math.random()
+          .toString(36)
+          .substring(2, 7)
+          .toUpperCase();
+        tracking_number = `${prefix}${year}${randomChars}`;
+      }
+
+      const sender_name =
+        colMap.sender_name > 0
+          ? row.getCell(colMap.sender_name).text?.trim()
+          : '';
+      const sender_phone =
+        colMap.sender_phone > 0
+          ? row.getCell(colMap.sender_phone).text?.trim()
+          : '';
+      const sender_address =
+        colMap.sender_address > 0
+          ? row.getCell(colMap.sender_address).text?.trim()
+          : '';
+      const receiver_name =
+        colMap.receiver_name > 0
+          ? row.getCell(colMap.receiver_name).text?.trim()
+          : '';
+      const receiver_phone =
+        colMap.receiver_phone > 0
+          ? row.getCell(colMap.receiver_phone).text?.trim()
+          : '';
+      const receiver_address =
+        colMap.receiver_address > 0
+          ? row.getCell(colMap.receiver_address).text?.trim()
+          : '';
+      const weightStr =
+        colMap.weight > 0 ? row.getCell(colMap.weight).text?.trim() : '';
+      const codStr = colMap.cod > 0 ? row.getCell(colMap.cod).text?.trim() : '';
 
       const rowErrorDetails: string[] = [];
 
-      if (!tracking_number) rowErrorDetails.push('Thiếu Mã vận đơn');
       if (!sender_name) rowErrorDetails.push('Thiếu Người gửi');
       if (!sender_phone) rowErrorDetails.push('Thiếu SĐT gửi');
       if (!sender_address) rowErrorDetails.push('Thiếu Địa chỉ gửi');
@@ -300,6 +487,7 @@ export class OrdersExcelService {
     // Tạo Header
     worksheet.columns = [
       { header: 'Mã vận đơn', key: 'tracking_number', width: 20 },
+      { header: 'Ngày tạo', key: 'created_at', width: 20 },
       { header: 'Trạng thái', key: 'current_status', width: 15 },
       { header: 'Người gửi', key: 'sender_name', width: 20 },
       { header: 'SĐT Gửi', key: 'sender_phone', width: 15 },
@@ -323,6 +511,7 @@ export class OrdersExcelService {
     orders.forEach((order) => {
       worksheet.addRow({
         tracking_number: order.tracking_number,
+        created_at: new Date(order.created_at).toLocaleString('vi-VN'),
         current_status: order.current_status,
         sender_name: order.sender_name,
         sender_phone: order.sender_phone,

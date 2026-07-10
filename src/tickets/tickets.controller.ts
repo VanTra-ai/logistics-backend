@@ -46,32 +46,8 @@ export class TicketsController {
     };
   }
 
-  @Get('me')
-  @Roles('CUSTOMER')
-  @UseGuards(RolesGuard)
-  async getMyTickets(
-    @Request() req: { user: { userId: string } },
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-    @Query('status') status?: string,
-    @Query('search') search?: string,
-  ) {
-    const tickets = await this.ticketsService.getMyTickets(
-      req.user.userId,
-      parseInt(page, 10),
-      parseInt(limit, 10),
-      status,
-      search,
-    );
-
-    return {
-      message: 'Tra cứu danh sách khiếu nại thành công!',
-      ...tickets,
-    };
-  }
-
   @Post()
-  @Roles('CUSTOMER') // Thường thì khách hàng sẽ là người tạo khiếu nại
+  @Roles('ADMIN', 'HUB_COORDINATOR') // Nhân viên nội bộ tạo khiếu nại/hỗ trợ
   @UseGuards(RolesGuard)
   async createTicket(
     @Body() createTicketDto: CreateTicketDto,

@@ -17,7 +17,6 @@ import { CreateInternalUserDto } from './dto/create-internal-user.dto';
 import { Role } from '../common/enums/role.enum';
 import { UsersService } from './users.service';
 import { AuthGuard } from '@nestjs/passport';
-import { RegisterUserDto } from './dto/register-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
@@ -26,16 +25,6 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 export class UsersController {
   // Tiêm UsersService vào để Controller có thể gọi hàm createUser
   constructor(private readonly usersService: UsersService) {}
-
-  // @Post('register') tạo ra endpoint: POST http://localhost:3000/users/register
-  @Post('register')
-  async register(@Body() registerDto: RegisterUserDto) {
-    const newUser = await this.usersService.createUser(registerDto);
-    return {
-      message: 'Đăng ký tài khoản thành công!',
-      data: newUser,
-    };
-  }
 
   @Post('internal')
   @Roles(Role.ADMIN) // Chỉ Admin mới được quyền này
@@ -136,7 +125,7 @@ export class UsersController {
       fullName?: string;
       phone_number?: string;
       address?: string;
-      role?: Role;
+      role?: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR';
       hubId?: string;
       status?: string;
       vehicle_number?: string;
@@ -146,7 +135,7 @@ export class UsersController {
     if (
       req.user.userId === id &&
       body.role !== undefined &&
-      body.role !== Role.ADMIN
+      body.role !== 'ADMIN'
     ) {
       throw new ForbiddenException('Bạn không thể tự hạ quyền của chính mình!');
     }

@@ -512,7 +512,7 @@ export class OrdersService {
     },
   ): Promise<{ data: Order[]; meta: any }> {
     const where: FindOptionsWhere<Order> = {};
-    if (user?.role === 'HUB_COORDINATOR' && user.hubId) {
+    if (user?.role !== 'ADMIN' && user?.hubId) {
       where.pickup_hub = { id: user.hubId };
     }
 
@@ -521,6 +521,7 @@ export class OrdersService {
       order: { created_at: 'DESC' },
       relations: {
         pickup_hub: true,
+        location: true,
       },
       skip: (page - 1) * limit,
       take: limit,
@@ -575,7 +576,7 @@ export class OrdersService {
   async cancelOrder(
     id: string,
     reason: string,
-    cancelledBy: 'CUSTOMER' | 'SHIPPER' | 'ADMIN',
+    cancelledBy: 'SHIPPER' | 'ADMIN',
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id },
@@ -585,14 +586,8 @@ export class OrdersService {
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
     // Logic nghiệp vụ chặt chẽ:
-    // - Khách chỉ được hủy khi PENDING
     // - Shipper chỉ được hủy khi DELIVERING
     // - Admin được hủy bất kỳ khi nào trừ FINISHED hoặc CANCELLED
-    if (cancelledBy === 'CUSTOMER' && order.current_status !== 'PENDING') {
-      throw new BadRequestException(
-        'Khách hàng chỉ được hủy khi đơn đang PENDING!',
-      );
-    }
 
     if (cancelledBy === 'SHIPPER' && order.current_status !== 'DELIVERING') {
       throw new BadRequestException(
@@ -632,8 +627,7 @@ export class OrdersService {
 
     // Ghi log vào tracking với note phân loại người hủy
     let actor = 'Hệ thống';
-    if (cancelledBy === 'CUSTOMER') actor = 'Khách hàng';
-    else if (cancelledBy === 'SHIPPER') actor = 'Shipper';
+    if (cancelledBy === 'SHIPPER') actor = 'Shipper';
     else if (cancelledBy === 'ADMIN') actor = 'Quản trị viên';
 
     await this.eventEmitter.emitAsync('order.status.changed', {

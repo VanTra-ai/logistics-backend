@@ -66,45 +66,14 @@ export class OrdersController {
       buffer: Buffer;
       size: number;
     },
+    @Request() req: { user: { role: string; hubId?: string } },
   ) {
     if (!file) {
       return { message: 'Không tìm thấy file tải lên.' };
     }
-    const orders = await this.ordersExcelService.importOrders(file.buffer);
-    return {
-      message: `Nhập thành công ${orders.length} đơn hàng!`,
-      data: orders,
-    };
-  }
-
-  @Post('customer/bulk-upload')
-  @UseInterceptors(FileInterceptor('file'))
-  @Roles('CUSTOMER')
-  @UseGuards(RolesGuard)
-  async importCustomerBulkUpload(
-    @UploadedFile()
-    file: {
-      fieldname: string;
-      originalname: string;
-      encoding: string;
-      mimetype: string;
-      buffer: Buffer;
-      size: number;
-    },
-    @Request() req: { user: { userId: string } },
-  ) {
-    if (!file) {
-      return { message: 'Không tìm thấy file tải lên.' };
-    }
-    const user = await this.userRepository.findOne({
-      where: { id: req.user.userId },
-    });
-    if (!user) {
-      return { message: 'Không tìm thấy người dùng.' };
-    }
-    const orders = await this.ordersExcelService.importCustomerOrders(
+    const orders = await this.ordersExcelService.importOrders(
       file.buffer,
-      user,
+      req.user,
     );
     return {
       message: `Nhập thành công ${orders.length} đơn hàng!`,
@@ -181,7 +150,7 @@ export class OrdersController {
   }
 
   @Get('statistics')
-  @Roles('ADMIN', 'HUB_COORDINATOR', 'CUSTOMER', 'SHIPPER')
+  @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
   @UseGuards(RolesGuard)
   async getStatistics() {
     return await this.ordersService.getStatistics();
@@ -219,10 +188,8 @@ export class OrdersController {
     @Request() req: { user: { role: string } },
   ) {
     const role = req.user.role;
-    let cancelledBy: 'CUSTOMER' | 'SHIPPER' | 'ADMIN';
-    if (role === 'CUSTOMER') {
-      cancelledBy = 'CUSTOMER';
-    } else if (role === 'SHIPPER') {
+    let cancelledBy: 'SHIPPER' | 'ADMIN';
+    if (role === 'SHIPPER') {
       cancelledBy = 'SHIPPER';
     } else {
       cancelledBy = 'ADMIN';

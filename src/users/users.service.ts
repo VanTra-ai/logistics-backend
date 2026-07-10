@@ -8,8 +8,6 @@ import { Repository } from 'typeorm';
 import { User } from './user.entity';
 import * as bcrypt from 'bcrypt';
 import { CreateInternalUserDto } from './dto/create-internal-user.dto';
-import { RegisterUserDto } from './dto/register-user.dto';
-import { Role } from '../common/enums/role.enum';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
@@ -22,7 +20,6 @@ export class UsersService {
   private async generateEmployeeCode(role: string): Promise<string> {
     let prefix = 'NV';
     if (role === 'SHIPPER') prefix = 'TX';
-    else if (role === 'CUSTOMER') prefix = 'KH';
 
     const count = await this.usersRepository.count({
       where: { role: role as any },
@@ -31,42 +28,6 @@ export class UsersService {
     const year = new Date().getFullYear().toString().substring(2);
     const sequence = (count + 1).toString().padStart(4, '0');
     return `${prefix}${year}${sequence}`;
-  }
-
-  async createUser(userData: RegisterUserDto): Promise<User> {
-    const existingUser = await this.usersRepository.findOne({
-      where: [
-        { email: userData.email },
-        { phone_number: userData.phone_number },
-      ],
-    });
-
-    if (existingUser) {
-      if (existingUser.email === userData.email) {
-        throw new ConflictException('Email này đã được sử dụng!');
-      }
-      if (existingUser.phone_number === userData.phone_number) {
-        throw new ConflictException('Số điện thoại này đã được sử dụng!');
-      }
-    }
-
-    const hashedPassword = await bcrypt.hash(userData.password_hash, 10);
-
-    const employeeCode = await this.generateEmployeeCode(
-      userData.role || 'CUSTOMER',
-    );
-
-    const newUser = this.usersRepository.create({
-      ...userData,
-      employee_code: employeeCode,
-      password_hash: hashedPassword,
-      role: userData.role || Role.CUSTOMER,
-    });
-
-    const savedUser = await this.usersRepository.save(newUser);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { password_hash, ...result } = savedUser;
-    return result as User;
   }
 
   async findByEmail(email: string): Promise<User | null> {
@@ -234,6 +195,7 @@ export class UsersService {
       relations: { hub: true },
       select: {
         id: true,
+        employee_code: true,
         email: true,
         full_name: true,
         role: true,
@@ -298,7 +260,7 @@ export class UsersService {
       fullName?: string;
       phone_number?: string;
       address?: string;
-      role?: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR' | 'CUSTOMER';
+      role?: 'ADMIN' | 'SHIPPER' | 'HUB_COORDINATOR';
       hubId?: string;
       status?: string;
       vehicle_number?: string;

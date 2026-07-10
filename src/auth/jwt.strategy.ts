@@ -7,6 +7,7 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  hubId?: string;
   iat?: number; // Thời gian tạo token (Issued At)
   exp?: number; // Thời gian hết hạn (Expiration)
 }
@@ -22,6 +23,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   validate(payload: JwtPayload) {
-    return { userId: payload.sub, email: payload.email, role: payload.role };
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      hubId: payload.hubId,
+    };
   }
 }

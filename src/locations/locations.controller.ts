@@ -20,6 +20,13 @@ import { Roles } from '../common/decorators/roles.decorator';
 export class LocationsController {
   constructor(private readonly locationsService: LocationsService) {}
 
+  @Get('zones')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(RolesGuard)
+  getZones(@Query('hubId') hubId?: string) {
+    return this.locationsService.getZones(hubId);
+  }
+
   @Get()
   @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(RolesGuard)

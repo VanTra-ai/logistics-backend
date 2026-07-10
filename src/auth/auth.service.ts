@@ -34,9 +34,9 @@ export class AuthService {
     }
 
     // 2. Tạo Payload cho JWT
-    const payload = { 
-      email: user.email, 
-      sub: user.id, 
+    const payload = {
+      email: user.email,
+      sub: user.id,
       role: user.role,
       hubId: user.hub?.id || null,
     };
@@ -89,9 +89,9 @@ export class AuthService {
       }
 
       // 4. Tạo cặp Token mới
-      const newPayload = { 
-        email: user.email, 
-        sub: user.id, 
+      const newPayload = {
+        email: user.email,
+        sub: user.id,
         role: user.role,
         hubId: user.hub?.id || null,
       };

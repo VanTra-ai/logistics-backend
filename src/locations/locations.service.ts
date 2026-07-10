@@ -16,6 +16,21 @@ export class LocationsService {
     private readonly dataSource: DataSource,
   ) {}
 
+  async getZones(hubId?: string) {
+    const query = this.locationsRepository
+      .createQueryBuilder('location')
+      .select('DISTINCT location.zone', 'zone')
+      .orderBy('location.zone', 'ASC');
+
+    if (hubId) {
+      query.leftJoin('location.hub', 'hub');
+      query.where('hub.id = :hubId', { hubId });
+    }
+
+    const result = await query.getRawMany();
+    return result.map((r: { zone: string }) => r.zone);
+  }
+
   async findAll(
     hubId?: string,
     zone?: string,
@@ -53,6 +68,47 @@ export class LocationsService {
       .take(limit)
       .getManyAndCount();
 
+    // Stats
+    const statsQuery = this.locationsRepository
+      .createQueryBuilder('location')
+      .leftJoin('location.hub', 'hub');
+
+    if (hubId) {
+      statsQuery.andWhere('hub.id = :hubId', { hubId });
+    }
+    if (zone) {
+      statsQuery.andWhere('location.zone = :zone', { zone });
+    }
+    if (search) {
+      statsQuery.andWhere('LOWER(location.barcode) LIKE LOWER(:search)', {
+        search: `%${search}%`,
+      });
+    }
+    // We don't filter status for stats, because stats should show counts of all statuses
+
+    const statsRaw = await statsQuery
+      .select('location.status', 'status')
+      .addSelect('COUNT(location.id)', 'count')
+      .groupBy('location.status')
+      .getRawMany();
+
+    const stats = {
+      total: totalItems, // if status is filtered, this is filtered total. Wait!
+      empty: 0,
+      occupied: 0,
+      full: 0,
+    };
+
+    let totalUnfiltered = 0;
+    statsRaw.forEach((row: { status: string; count: string }) => {
+      const count = parseInt(row.count, 10);
+      totalUnfiltered += count;
+      if (row.status === 'EMPTY') stats.empty = count;
+      else if (row.status === 'OCCUPIED') stats.occupied = count;
+      else if (row.status === 'FULL') stats.full = count;
+    });
+    stats.total = totalUnfiltered;
+
     return {
       data,
       meta: {
@@ -61,6 +117,7 @@ export class LocationsService {
         itemsPerPage: limit,
         totalPages: Math.ceil(totalItems / limit),
         currentPage: page,
+        stats,
       },
     };
   }
@@ -71,7 +128,21 @@ export class LocationsService {
       location.barcode =
         `LOC-${data.zone}-${data.aisle}-${data.shelf}-${data.bin}`.toUpperCase();
     }
-    return await this.locationsRepository.save(location);
+    try {
+      return await this.locationsRepository.save(location);
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error as { code: string }).code === '23505'
+      ) {
+        throw new BadRequestException(
+          'Mã vị trí (barcode) này đã tồn tại trong hệ thống',
+        );
+      }
+      throw error;
+    }
   }
 
   async delete(id: string) {
@@ -124,7 +195,12 @@ export class LocationsService {
       }
 
       if (order.location) {
-        throw new BadRequestException('Đơn hàng này đã được xếp lên kệ');
+        if (order.location.id === location.id) {
+          throw new BadRequestException(
+            'Đơn hàng này đã được xếp lên kệ này rồi',
+          );
+        }
+        await this.removeOrderFromLocation(order, manager);
       }
 
       // Check cross-hub security
@@ -138,20 +214,20 @@ export class LocationsService {
         );
       }
 
-      // Assign order to location
-      order.location = location;
-      await manager.save(order);
+      // Assign order to location using update to ensure foreign key is set
+      await manager.update(Order, order.id, { location: { id: location.id } });
 
       // Update location status
       const currentOrdersCount = location.orders.length + 1;
-      if (currentOrdersCount >= location.max_capacity) {
-        location.status = 'FULL';
-      } else {
-        location.status = 'OCCUPIED';
-      }
-      await manager.save(location);
+      const newStatus =
+        currentOrdersCount >= location.max_capacity ? 'FULL' : 'OCCUPIED';
+      await manager.update(Location, location.id, { status: newStatus });
 
-      return { message: 'Đã xếp đơn hàng lên kệ thành công', order, location };
+      return {
+        message: 'Đã xếp đơn hàng lên kệ thành công',
+        order,
+        location: { ...location, status: newStatus },
+      };
     });
   }
 
@@ -179,17 +255,18 @@ export class LocationsService {
         (o: Order) => o.id !== order.id,
       ).length;
 
+      let newStatus = location.status;
       if (remainingOrdersCount === 0) {
-        location.status = 'EMPTY';
+        newStatus = 'EMPTY';
       } else if (remainingOrdersCount >= location.max_capacity) {
-        location.status = 'FULL';
+        newStatus = 'FULL';
       } else {
-        location.status = 'OCCUPIED';
+        newStatus = 'OCCUPIED';
       }
-      await manager.save(Location, location);
+      await manager.update(Location, location.id, { status: newStatus });
     }
 
     order.location = null as any;
-    // We don't save order here to avoid multiple saves, the caller should save order.
+    await manager.update(Order, order.id, { location: null as any });
   }
 }

@@ -10,7 +10,7 @@ export class RatingsController {
   constructor(private readonly ratingsService: RatingsService) {}
 
   @Post()
-  @Roles('CUSTOMER')
+  @Roles('ADMIN') // Khóa tạm thời, tương lai mở public cho tracking link
   @UseGuards(RolesGuard)
   async createRating(
     @Body() createRatingDto: CreateRatingDto,
