@@ -87,10 +87,23 @@ export class UsersController {
   @Get()
   @Roles(Role.ADMIN, Role.HUB_COORDINATOR)
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  async getAllUsers(@Query('page') page = 1, @Query('limit') limit = 10) {
+  async getAllUsers(
+    @Request() req: { user: { role: string; hubId?: string } },
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('status') status?: string,
+    @Query('role') role?: string,
+    @Query('hubId') hubIdFilter?: string,
+    @Query('search') search?: string,
+  ) {
     const result = await this.usersService.findAllUsers(
       Number(page),
       Number(limit),
+      req.user,
+      status,
+      role,
+      hubIdFilter,
+      search,
     );
     return {
       message: 'Lấy danh sách người dùng thành công!',

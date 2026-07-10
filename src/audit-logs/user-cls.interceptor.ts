@@ -15,9 +15,10 @@ export class UserClsInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
-    if (user && user.id) {
+    const userId = user?.userId || user?.id;
+    if (userId) {
       if (this.cls.isActive()) {
-        this.cls.set('userId', user.id);
+        this.cls.set('userId', userId);
       }
     }
     return next.handle();

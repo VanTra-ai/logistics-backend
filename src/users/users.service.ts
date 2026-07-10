@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, FindOptionsWhere, ILike } from 'typeorm';
 import { User } from './user.entity';
 import * as bcrypt from 'bcrypt';
 import { CreateInternalUserDto } from './dto/create-internal-user.dto';
@@ -190,8 +190,42 @@ export class UsersService {
   async findAllUsers(
     page = 1,
     limit = 10,
+    userCtx?: { role: string; hubId?: string },
+    status?: string,
+    roleFilter?: string,
+    hubIdFilter?: string,
+    search?: string,
   ): Promise<{ data: User[]; meta: any }> {
+    const where: FindOptionsWhere<User> = {};
+
+    if (userCtx?.role !== 'ADMIN' && userCtx?.hubId) {
+      where.hub = { id: userCtx.hubId };
+    } else if (hubIdFilter && hubIdFilter !== 'ALL') {
+      where.hub = { id: hubIdFilter };
+    }
+
+    if (status && status !== 'ALL') {
+      where.status = status;
+    }
+
+    if (roleFilter && roleFilter !== 'ALL') {
+      where.role = roleFilter as any;
+    }
+
+    let findConditions: FindOptionsWhere<User> | FindOptionsWhere<User>[] =
+      where;
+    if (search) {
+      const searchPattern = `%${search}%`;
+      findConditions = [
+        { ...where, full_name: ILike(searchPattern) },
+        { ...where, email: ILike(searchPattern) },
+        { ...where, phone_number: ILike(searchPattern) },
+        { ...where, employee_code: ILike(searchPattern) },
+      ];
+    }
+
     const [data, totalItems] = await this.usersRepository.findAndCount({
+      where: findConditions,
       relations: { hub: true },
       select: {
         id: true,

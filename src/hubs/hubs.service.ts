@@ -133,6 +133,7 @@ export class HubsService {
         origin_hub: true,
         destination_hub: true,
         shipper: true,
+        orders: true,
       },
       order: { created_at: 'DESC' },
     });

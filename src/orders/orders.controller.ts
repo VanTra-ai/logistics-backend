@@ -98,14 +98,20 @@ export class OrdersController {
 
   @Get()
   async getAllOrders(
+    @Request() req: { user: { userId: string; role: string; hubId?: string } },
     @Query('page') page = 1,
     @Query('limit') limit = 10,
-    @Request() req: { user: { userId: string; role: string; hubId?: string } },
+    @Query('status') status?: string,
+    @Query('hubId') hubIdFilter?: string,
+    @Query('search') search?: string,
   ) {
     const result = await this.ordersService.findAllOrders(
       Number(page),
       Number(limit),
       req.user,
+      status,
+      hubIdFilter,
+      search,
     );
     return {
       message: 'Lấy danh sách đơn hàng thành công!',

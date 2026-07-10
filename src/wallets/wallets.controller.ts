@@ -7,6 +7,7 @@ import {
   Request,
   Param,
   Patch,
+  Query,
 } from '@nestjs/common';
 import { WalletsService } from './wallets.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -19,9 +20,23 @@ export class WalletsController {
   constructor(private readonly walletsService: WalletsService) {}
 
   @Get()
-  @Roles('ADMIN')
-  async findAll() {
-    return await this.walletsService.findAll();
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  async findAll(
+    @Request() req: { user: { role: string; hubId?: string } },
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('hubId') hubIdFilter?: string,
+  ) {
+    const pageNum = parseInt(page || '1', 10);
+    const limitNum = parseInt(limit || '10', 10);
+    return await this.walletsService.findAll(
+      req.user,
+      pageNum,
+      limitNum,
+      search,
+      hubIdFilter,
+    );
   }
 
   @Get('me')
@@ -32,8 +47,10 @@ export class WalletsController {
 
   @Get('requests')
   @Roles('ADMIN', 'HUB_COORDINATOR')
-  async getRequests() {
-    return await this.walletsService.getRequests();
+  async getRequests(
+    @Request() req: { user: { role: string; hubId?: string } },
+  ) {
+    return await this.walletsService.getRequests(req.user);
   }
 
   @Post('requests')

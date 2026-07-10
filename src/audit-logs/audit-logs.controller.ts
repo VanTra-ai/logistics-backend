@@ -16,9 +16,20 @@ export class AuditLogsController {
     @Query('limit') limit?: string,
     @Query('entityName') entityName?: string,
     @Query('action') action?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('searchUser') searchUser?: string,
   ) {
     const pageNum = parseInt(page || '1', 10);
     const limitNum = parseInt(limit || '10', 10);
-    return this.auditLogsService.findAll(pageNum, limitNum, entityName, action);
+    return this.auditLogsService.findAll(
+      pageNum,
+      limitNum,
+      entityName,
+      action,
+      startDate,
+      endDate,
+      searchUser,
+    );
   }
 }

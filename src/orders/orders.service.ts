@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, DataSource, FindOptionsWhere } from 'typeorm';
+import { Repository, In, DataSource, FindOptionsWhere, ILike } from 'typeorm';
 import { Order } from './order.entity';
 import { HubsService } from '../hubs/hubs.service';
 import { Hub } from '../hubs/hub.entity';
@@ -510,14 +510,38 @@ export class OrdersService {
       role: string;
       hubId?: string;
     },
+    status?: string,
+    hubIdFilter?: string,
+    search?: string,
   ): Promise<{ data: Order[]; meta: any }> {
     const where: FindOptionsWhere<Order> = {};
+
+    // Role-based scoping
     if (user?.role !== 'ADMIN' && user?.hubId) {
       where.pickup_hub = { id: user.hubId };
+    } else if (hubIdFilter && hubIdFilter !== 'ALL') {
+      where.pickup_hub = { id: hubIdFilter };
+    }
+
+    if (status && status !== 'ALL') {
+      where.current_status = status;
+    }
+
+    // Apply search logic using array of where conditions for OR clauses
+    let findConditions: FindOptionsWhere<Order> | FindOptionsWhere<Order>[] =
+      where;
+    if (search) {
+      const searchPattern = `%${search}%`;
+      findConditions = [
+        { ...where, tracking_number: ILike(searchPattern) },
+        { ...where, sender_name: ILike(searchPattern) },
+        { ...where, receiver_name: ILike(searchPattern) },
+        { ...where, receiver_phone: ILike(searchPattern) },
+      ];
     }
 
     const [data, totalItems] = await this.ordersRepository.findAndCount({
-      where,
+      where: findConditions,
       order: { created_at: 'DESC' },
       relations: {
         pickup_hub: true,

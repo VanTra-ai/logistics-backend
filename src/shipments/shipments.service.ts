@@ -111,6 +111,18 @@ export class ShipmentsService {
     return `CX${dateStr}-${sequence}`;
   }
 
+  async findAllShipments(): Promise<Shipment[]> {
+    return await this.shipmentsRepository.find({
+      relations: {
+        origin_hub: true,
+        destination_hub: true,
+        shipper: true,
+        orders: true,
+      },
+      order: { created_at: 'DESC' },
+    });
+  }
+
   async createShipment(data: CreateShipmentDto): Promise<Shipment> {
     const shipper = await this.usersRepository.findOne({
       where: { id: data.shipper_id },

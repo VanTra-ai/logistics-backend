@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In } from 'typeorm';
+import { Repository, DataSource, In, FindOptionsWhere } from 'typeorm';
 import { Wallet } from './wallet.entity';
 import { Transaction } from './transaction.entity';
 import { WalletRequest } from './wallet-request.entity';
@@ -19,10 +19,94 @@ export class WalletsService {
     private dataSource: DataSource,
   ) {}
 
-  async findAll() {
-    return this.walletsRepository.find({
-      relations: { user: { hub: true } },
+  async findAll(
+    user?: { role: string; hubId?: string },
+    page: number = 1,
+    limit: number = 10,
+    search?: string,
+    hubIdFilter?: string,
+  ) {
+    // 1. Tự động tạo ví cho các user chưa có (tránh việc danh sách bị thiếu người)
+    const usersFilter: FindOptionsWhere<User> = { role: 'SHIPPER' };
+    if (user?.role === 'HUB_COORDINATOR' && user?.hubId) {
+      usersFilter.hub = { id: user.hubId };
+    }
+
+    const users = await this.dataSource.manager.find(User, {
+      where: usersFilter,
+      relations: { hub: true },
     });
+
+    const wallets = await this.walletsRepository.find({
+      relations: { user: true },
+    });
+
+    const walletUserIds = new Set(wallets.map((w) => w.user.id));
+    const missingUsers = users.filter((u) => !walletUserIds.has(u.id));
+
+    if (missingUsers.length > 0) {
+      const newWallets = missingUsers.map((u) =>
+        this.walletsRepository.create({
+          user: u,
+          income_balance: 0,
+          cod_debt: 0,
+        }),
+      );
+      await this.walletsRepository.save(newWallets);
+    }
+
+    // 2. Query lại dữ liệu mới nhất
+    const whereClause: FindOptionsWhere<Wallet> = {
+      user: { role: 'SHIPPER' },
+    };
+
+    // User role limits the scope to their hub
+    if (user?.role === 'HUB_COORDINATOR' && user?.hubId) {
+      whereClause.user = {
+        ...((whereClause.user as object) || {}),
+        role: 'SHIPPER',
+        hub: { id: user.hubId },
+      };
+    } else if (hubIdFilter && hubIdFilter !== 'ALL') {
+      whereClause.user = {
+        ...((whereClause.user as object) || {}),
+        role: 'SHIPPER',
+        hub: { id: hubIdFilter },
+      };
+    }
+
+    const query = this.walletsRepository
+      .createQueryBuilder('wallet')
+      .leftJoinAndSelect('wallet.user', 'user')
+      .leftJoinAndSelect('user.hub', 'hub')
+      .where('user.role = :role', { role: 'SHIPPER' });
+
+    if (user?.role === 'HUB_COORDINATOR' && user?.hubId) {
+      query.andWhere('hub.id = :hubId', { hubId: user.hubId });
+    } else if (hubIdFilter && hubIdFilter !== 'ALL') {
+      query.andWhere('hub.id = :hubId', { hubId: hubIdFilter });
+    }
+
+    if (search) {
+      query.andWhere('user.full_name ILIKE :search', { search: `%${search}%` });
+    }
+
+    const [data, totalItems] = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .orderBy('user.full_name', 'ASC')
+      .getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async findMyWallet(userId: string) {
@@ -38,8 +122,13 @@ export class WalletsService {
     return wallet;
   }
 
-  async getRequests() {
+  async getRequests(user?: { role: string; hubId?: string }) {
+    const whereClause: FindOptionsWhere<WalletRequest> = {};
+    if (user?.role === 'HUB_COORDINATOR' && user?.hubId) {
+      whereClause.user = { hub: { id: user.hubId } };
+    }
     return this.dataSource.manager.find(WalletRequest, {
+      where: whereClause,
       relations: { user: { hub: true } },
       order: { created_at: 'DESC' },
     });

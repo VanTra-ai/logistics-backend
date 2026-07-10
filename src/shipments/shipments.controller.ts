@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   UseGuards,
+  Get,
 } from '@nestjs/common';
 import {
   ShipmentsService,
@@ -32,6 +33,14 @@ export class ShipmentsController {
       message: 'Tạo chuyến xe vận chuyển mới thành công!',
       data: shipment,
     };
+  }
+
+  @Get()
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async getAllShipments() {
+    const data = await this.shipmentsService.findAllShipments();
+    return { data };
   }
 
   @Patch(':id/orders')
