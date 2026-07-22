@@ -63,6 +63,12 @@ import { PasswordResetOtp } from './auth/password-reset-otp.entity';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRoot({
+      ssl: false,
+      extra: {
+        ssl: {
+          rejectUnauthorized: false,
+        },
+      },
       type: 'postgres',
       host: process.env.DB_HOST,
       port: parseInt(process.env.DB_PORT || '5432'),
