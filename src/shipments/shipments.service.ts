@@ -20,6 +20,8 @@ import { Hub } from '../hubs/hub.entity';
 import { Order } from '../orders/order.entity';
 import { TrackingsService } from '../trackings/trackings.service';
 import { LocationsService } from '../locations/locations.service';
+import { VehiclesService } from '../vehicles/vehicles.service';
+import { DeliveryAttempt } from './delivery-attempt.entity';
 
 export class AssignOrdersDto {
   @IsArray()
@@ -69,6 +71,11 @@ export class CreateShipmentDto {
   vehicle_type!: string;
 
   @IsString()
+  @IsNotEmpty({ message: 'Bắt buộc phải có loại chuyến xe (type)!' })
+  @IsIn(['PICKUP', 'DELIVERY', 'RETURN'])
+  type!: string;
+
+  @IsString()
   @IsNotEmpty({ message: 'Bắt buộc phải có trạm xuất phát (origin_hub_id)!' })
   origin_hub_id!: string;
 
@@ -83,6 +90,11 @@ export class CreateShipmentDto {
   @IsOptional()
   @IsNumber()
   capacity_weight?: number;
+
+  // ID xe từ bảng Vehicle master data (optional, ưu tiên khi có)
+  @IsOptional()
+  @IsString()
+  vehicle_id?: string;
 }
 
 @Injectable()
@@ -97,6 +109,7 @@ export class ShipmentsService {
     private dataSource: DataSource,
     private trackingsService: TrackingsService,
     private locationsService: LocationsService,
+    private vehiclesService: VehiclesService,
   ) {}
 
   private async generateShipmentCode(): Promise<string> {
@@ -121,6 +134,65 @@ export class ShipmentsService {
       },
       order: { created_at: 'DESC' },
     });
+  }
+
+  async findMyShipments(userId: string, page = 1, limit = 10, date?: string) {
+    const query = this.shipmentsRepository
+      .createQueryBuilder('shipment')
+      .leftJoinAndSelect('shipment.origin_hub', 'origin_hub')
+      .leftJoinAndSelect('shipment.destination_hub', 'destination_hub')
+      .leftJoinAndSelect('shipment.orders', 'order')
+      .leftJoinAndSelect('order.location', 'location')
+      .leftJoin('shipment.shipper', 'shipper')
+      .where('shipper.id = :userId', { userId });
+
+    if (date) {
+      query.andWhere('DATE(shipment.created_at) = :date', { date });
+    }
+
+    const [data, totalItems] = await query
+      .orderBy('shipment.created_at', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    const shipmentIds = data.map((s) => s.id);
+    if (shipmentIds.length > 0) {
+      const attempts = await this.dataSource.manager.find(DeliveryAttempt, {
+        where: {
+          shipment: { id: In(shipmentIds) },
+        },
+        relations: { order: true, shipment: true },
+      });
+
+      for (const shipment of data) {
+        if (shipment.orders) {
+          for (const order of shipment.orders) {
+            const attempt = attempts.find(
+              (a) => a.shipment?.id === shipment.id && a.order?.id === order.id,
+            );
+            if (attempt) {
+              // Attach attempt metadata without overwriting order.current_status
+              // (attempt.status uses different vocabulary: IN_TRANSIT, FINISHED, FAILED, REMOVED)
+              (order as unknown as Record<string, unknown>)[
+                'delivery_attempt'
+              ] = attempt;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async createShipment(data: CreateShipmentDto): Promise<Shipment> {
@@ -188,6 +260,28 @@ export class ShipmentsService {
 
     const shipmentCode = await this.generateShipmentCode();
 
+    // Nếu có vehicle_id, lấy thông tin từ Vehicle master data
+    let vehicleRecord: import('../vehicles/vehicle.entity').Vehicle | null =
+      null;
+    if (data.vehicle_id) {
+      try {
+        const found = await this.vehiclesService.findOne(data.vehicle_id);
+        if (found.status !== 'ACTIVE') {
+          throw new BadRequestException(
+            `Phương tiện ${found.license_plate} đang ${found.status === 'ON_TRIP' ? 'trong chuyến vận hành khác' : 'bảo trì'}, không thể tạo chuyến xe mới!`,
+          );
+        }
+        // Ghi đè thông tin từ Vehicle master
+        data.vehicle_number = found.license_plate;
+        data.vehicle_type = found.vehicle_type;
+        data.capacity_weight = found.capacity_weight;
+        vehicleRecord = found;
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+        // Vehicle not found — bỏ qua
+      }
+    }
+
     const newShipment = this.shipmentsRepository.create({
       shipment_code: shipmentCode,
       shipper,
@@ -200,15 +294,21 @@ export class ShipmentsService {
           ? Number(data.capacity_weight)
           : 1000,
       status: 'PENDING',
+      type: data.type || 'DELIVERY',
+      vehicle: vehicleRecord,
     });
 
     return await this.shipmentsRepository.save(newShipment);
   }
 
-  async assignOrdersToShipment(shipmentId: string, data: AssignOrdersDto) {
+  async assignOrdersToShipment(
+    shipmentId: string,
+    data: AssignOrdersDto,
+    operatorId?: string,
+  ) {
     const shipment = await this.shipmentsRepository.findOne({
       where: { id: shipmentId },
-      relations: { orders: true },
+      relations: { orders: true, shipper: true },
     });
     if (!shipment) throw new NotFoundException('Không tìm thấy chuyến xe!');
 
@@ -252,24 +352,56 @@ export class ShipmentsService {
         );
       }
 
-      // Kiểm tra và gán chuyến xe
+      // Kiểm tra và gán chuyến xe theo loại
+      const shipmentType = shipment.type || 'DELIVERY';
+      const allowedStatuses: Record<string, string[]> = {
+        PICKUP: ['PENDING'],
+        DELIVERY: ['AT_HUB'],
+        RETURN: ['RETURN_TO_SENDER'],
+      };
+      const typeLabels: Record<string, string> = {
+        PICKUP: 'lấy hàng (PENDING)',
+        DELIVERY: 'lưu kho (AT_HUB)',
+        RETURN: 'chờ hoàn (RETURN_TO_SENDER)',
+      };
+
       for (const order of orders) {
-        if (order.current_status !== 'AT_HUB') {
+        const allowed = allowedStatuses[shipmentType] || [];
+        if (!allowed.includes(order.current_status)) {
           throw new BadRequestException(
-            `Đơn hàng ${order.tracking_number || order.id} không ở trạng thái lưu kho (AT_HUB)!`,
+            `Đơn hàng ${order.tracking_number || order.id} không hợp lệ! Chuyến xe ${shipmentType} chỉ nhận đơn ở trạng thái: ${typeLabels[shipmentType]}.`,
           );
         }
-        order.shipment = shipment; // Liên kết đơn hàng vào chuyến xe
-        order.current_status = 'IN_TRANSIT'; // Đã đóng bao / Lên tải
+        order.shipment = shipment;
+        // Trạng thái đơn khi được xếp lên xe (chờ xuất bến)
+        if (shipmentType === 'PICKUP') {
+          order.current_status = 'IN_TRANSIT'; // Sẽ đổi thành PICKING khi xe xuất bến
+        } else if (shipmentType === 'RETURN') {
+          order.current_status = 'RETURNING'; // Chờ xe chạy
+        } else {
+          order.current_status = 'IN_TRANSIT'; // Đóng bao, lên tải
+        }
       }
 
       // Lưu toàn bộ đơn hàng bằng Transaction
       await queryRunner.manager.save(orders);
 
+      // Tạo DeliveryAttempt (nỗ lực giao hàng)
+      for (const order of orders) {
+        const attempt = queryRunner.manager.create(DeliveryAttempt, {
+          order,
+          shipment,
+          shipper: shipment.shipper,
+          status: 'PENDING',
+        });
+        await queryRunner.manager.save(DeliveryAttempt, attempt);
+      }
+
       // Thêm mốc lịch sử hành trình cho từng đơn hàng
       for (const order of orders) {
         await this.trackingsService.addTrackingRecord({
           order,
+          operatorId: operatorId,
           status: 'IN_TRANSIT',
           note: `Đơn hàng đã được xếp vào chuyến xe ${shipment.shipment_code || shipment.id} chuẩn bị lăn bánh.`,
         });
@@ -300,6 +432,7 @@ export class ShipmentsService {
         orders: { location: true },
         destination_hub: true,
         origin_hub: true,
+        shipper: true,
       }, // Nạp kèm danh sách đơn hàng và location
     });
 
@@ -313,64 +446,131 @@ export class ShipmentsService {
       shipment.status = data.status;
       await queryRunner.manager.save(shipment);
 
-      // Nếu xe chạy (IN_TRANSIT) -> Chuyển trạng thái các đơn hàng thành "Đang luân chuyển"
+      const shipmentType = shipment.type || 'DELIVERY';
+
+      // Nếu xe xuất bến (IN_TRANSIT) -> Đánh dấu xe ON_TRIP trong Vehicle master
+      if (data.status === 'IN_TRANSIT' && shipment.vehicle_number) {
+        await this.vehiclesService.setOnTrip(shipment.vehicle_number);
+      }
+
+      // Nếu xe xuất bến (IN_TRANSIT) -> Cập nhật trạng thái đơn theo loại chuyến
       if (data.status === 'IN_TRANSIT') {
         for (const order of shipment.orders) {
-          // Bỏ qua các đơn hàng đã hủy / chuyển hoàn để tránh lỗi hồi sinh đơn
           if (
             order.current_status === 'CANCELLED' ||
-            order.current_status === 'RETURNED_TO_SENDER'
+            order.current_status === 'FINISHED' ||
+            order.current_status === 'RETURNED'
           ) {
             continue;
           }
 
-          // Rút hàng khỏi kệ (pick-out) khi xe bắt đầu chạy
+          // Rút hàng khỏi kệ khi xe bắt đầu chạy
           await this.locationsService.removeOrderFromLocation(
             order,
             queryRunner.manager,
           );
 
-          // Trạng thái đơn hàng dựa trên loại xe
-          if (shipment.vehicle_type === 'BIKE') {
-            order.current_status = 'DELIVERING';
+          // Cập nhật DeliveryAttempt
+          const attempt = await queryRunner.manager.findOne(DeliveryAttempt, {
+            where: { order: { id: order.id }, shipment: { id: shipment.id } },
+          });
+          if (attempt) {
+            attempt.status = 'IN_TRANSIT';
+            await queryRunner.manager.save(DeliveryAttempt, attempt);
           }
-          // Nếu là TRUCK, giữ nguyên IN_TRANSIT
 
-          // Xóa dòng removeOrderFromLocation bị trùng lặp
+          // ─── Rẽ nhánh theo loại chuyến xe ───
+          if (shipmentType === 'PICKUP') {
+            // Xe lấy hàng: Đang trên đường đến shop lấy hàng
+            order.current_status = 'PICKING';
+          } else if (shipmentType === 'RETURN') {
+            // Xe trả hàng: Đang trên đường trả về tay người gửi
+            order.current_status = 'RETURNING';
+          } else {
+            // DELIVERY: Phụ thuộc loại phương tiện
+            if (shipment.vehicle_type === 'BIKE') {
+              order.current_status = 'DELIVERING'; // Xe máy giao thẳng tới khách
+            }
+            // TRUCK: giữ nguyên IN_TRANSIT, đang luân chuyển liên bưu cục
+          }
 
-          // Ghi nhận mốc luân chuyển hành trình
+          const typeNotes: Record<string, string> = {
+            PICKUP: `Chuyến LẤY HÀNG ${shipment.shipment_code} xuất bến. Shipper ${shipment.shipper?.full_name} đang đến lấy hàng.`,
+            DELIVERY:
+              shipment.vehicle_type === 'TRUCK'
+                ? `Chuyến GIAO HÀNG ${shipment.shipment_code} khởi hành từ ${shipment.origin_hub?.name} → ${shipment.destination_hub?.name || 'đích'}.`
+                : `Chuyến GIAO HÀNG ${shipment.shipment_code} xuất bến. Shipper ${shipment.shipper?.full_name} bắt đầu giao.`,
+            RETURN: `Chuyến HOÀN HÀNG ${shipment.shipment_code} xuất bến. Shipper ${shipment.shipper?.full_name} đang trả hàng về người gửi.`,
+          };
+
           await this.trackingsService.addTrackingRecord({
             order,
             status: order.current_status,
             note:
-              shipment.vehicle_type === 'TRUCK'
-                ? `Chuyến xe luân chuyển ${shipment.shipment_code} đã khởi hành từ ${shipment.origin_hub?.name || 'bưu cục gửi'} đi bưu cục ${shipment.destination_hub?.name || 'đích'}.`
-                : `Chuyến xe giao hàng trực tiếp ${shipment.shipment_code} đã lăn bánh đi giao tới người nhận.`,
+              typeNotes[shipmentType] ||
+              `Chuyến xe ${shipment.shipment_code} xuất bến.`,
           });
         }
       }
-      // Nếu xe đến nơi (COMPLETED) -> Hạ tải, hàng nhập kho bưu cục đích
+      // Nếu xe cập bến (COMPLETED) -> Rẽ nhánh theo loại chuyến + loại phương tiện
       else if (data.status === 'COMPLETED') {
+        // Đồng bộ Vehicle master: xe ACTIVE trở lại
+        // Xe tải chuyển về hub đích, xe máy giữ nguyên hub gốc
+        if (shipment.vehicle_number) {
+          const newHubId =
+            shipment.vehicle_type === 'TRUCK' && shipment.destination_hub?.id
+              ? shipment.destination_hub.id
+              : undefined;
+          await this.vehiclesService.setActive(
+            shipment.vehicle_number,
+            newHubId,
+          );
+        }
+
         for (const order of shipment.orders) {
-          // Bỏ qua các đơn hàng đã hủy / chuyển hoàn để tránh lỗi hồi sinh đơn
           if (
             order.current_status === 'CANCELLED' ||
-            order.current_status === 'RETURNED_TO_SENDER'
+            order.current_status === 'FINISHED' ||
+            order.current_status === 'RETURNED'
           ) {
             continue;
           }
 
-          if (shipment.vehicle_type === 'TRUCK') {
+          if (shipmentType === 'PICKUP') {
+            // Chuyến LẤY HÀNG hoàn thành: toàn bộ đơn vào kho
             order.current_status = 'AT_HUB';
-            // Gỡ bỏ liên kết chuyến xe vì hàng đã xuống bãi
             order.shipment = null as any;
-
-            // Ghi nhận mốc hạ tải hành trình
             await this.trackingsService.addTrackingRecord({
               order,
               status: 'AT_HUB',
-              note: `Chuyến xe luân chuyển ${shipment.shipment_code} đã hoàn thành cập bến. Đơn hàng đã hạ tải nhập kho bưu cục ${shipment.destination_hub?.name || 'đích'}.`,
+              note: `Chuyến LẤY HÀNG ${shipment.shipment_code} hoàn thành. Đơn hàng đã nhập kho ${shipment.origin_hub?.name}.`,
             });
+          } else if (shipmentType === 'DELIVERY') {
+            if (shipment.vehicle_type === 'TRUCK') {
+              // Xe tải GIAO HÀNG đến kho đích -> hạ tải, chờ phân phối tiếp
+              order.current_status = 'AT_HUB';
+              order.shipment = null as any;
+              await this.trackingsService.addTrackingRecord({
+                order,
+                status: 'AT_HUB',
+                note: `Chuyến GIAO HÀNG ${shipment.shipment_code} cập bến. Đơn hàng nhập kho ${shipment.destination_hub?.name || 'bưu cục đích'}.`,
+              });
+            }
+            // BIKE DELIVERY: Không đổi trạng thái đơn.
+            // Shipper sẽ tự cập nhật FINISHED / FAILED từng đơn qua app.
+          } else if (shipmentType === 'RETURN') {
+            if (shipment.vehicle_type === 'TRUCK') {
+              // Xe tải HOÀN HÀNG đến kho gốc -> giữ RETURN_TO_SENDER, chờ bưu cục gốc phân phát
+              order.current_status = 'RETURN_TO_SENDER';
+              order.shipment = null as any;
+              await this.trackingsService.addTrackingRecord({
+                order,
+                status: 'RETURN_TO_SENDER',
+                note: `Chuyến HOÀN HÀNG ${shipment.shipment_code} cập bến ${shipment.destination_hub?.name || 'bưu cục gốc'}. Đơn chờ trả về tay người gửi.`,
+              });
+            }
+            // BIKE RETURN: Không đổi trạng thái.
+            // Shipper tự cập nhật RETURNED khi trả tận tay người gửi.
           }
         }
       }
@@ -394,7 +594,11 @@ export class ShipmentsService {
     }
   }
 
-  async removeOrderFromShipment(shipmentId: string, orderId: string) {
+  async removeOrderFromShipment(
+    shipmentId: string,
+    orderId: string,
+    operatorId?: string,
+  ) {
     const shipment = await this.shipmentsRepository.findOne({
       where: { id: shipmentId },
     });
@@ -424,12 +628,30 @@ export class ShipmentsService {
 
     // Gỡ liên kết và trả về kho
     order.shipment = null as any;
-    order.current_status = 'AT_HUB';
+    if (order.current_status === 'RETURNING') {
+      order.current_status = 'RETURN_TO_SENDER';
+    } else {
+      order.current_status = 'AT_HUB';
+    }
     await this.dataSource.manager.save(order);
+
+    // Cập nhật DeliveryAttempt nếu có
+    const attempt = await this.dataSource.manager.findOne(DeliveryAttempt, {
+      where: { order: { id: order.id }, shipment: { id: shipment.id } },
+    });
+    if (
+      attempt &&
+      attempt.status !== 'FINISHED' &&
+      attempt.status !== 'FAILED'
+    ) {
+      attempt.status = 'REMOVED';
+      await this.dataSource.manager.save(DeliveryAttempt, attempt);
+    }
 
     // Ghi nhận mốc hành trình giải phóng đơn hàng
     await this.trackingsService.addTrackingRecord({
       order,
+      operatorId: operatorId,
       status: 'AT_HUB',
       note: `Đơn hàng được gỡ khỏi chuyến xe gom nhóm ${shipment.shipment_code || shipment.id} và đưa về trạng thái lưu kho bãi.`,
     });
@@ -529,6 +751,18 @@ export class ShipmentsService {
           order.shipment = null as any;
           await queryRunner.manager.save(order);
 
+          const attempt = await queryRunner.manager.findOne(DeliveryAttempt, {
+            where: { order: { id: order.id }, shipment: { id: shipment.id } },
+          });
+          if (
+            attempt &&
+            attempt.status !== 'FINISHED' &&
+            attempt.status !== 'FAILED'
+          ) {
+            attempt.status = 'REMOVED';
+            await queryRunner.manager.save(DeliveryAttempt, attempt);
+          }
+
           // Ghi nhận mốc hành trình giải phóng đồng loạt
           await this.trackingsService.addTrackingRecord({
             order,
@@ -548,7 +782,7 @@ export class ShipmentsService {
     }
   }
 
-  async cancelShipment(id: string) {
+  async cancelShipment(id: string, operatorId?: string) {
     const shipment = await this.shipmentsRepository.findOne({
       where: { id },
       relations: { orders: true },
@@ -571,8 +805,21 @@ export class ShipmentsService {
           order.shipment = null as any;
           await queryRunner.manager.save(order);
 
+          const attempt = await queryRunner.manager.findOne(DeliveryAttempt, {
+            where: { order: { id: order.id }, shipment: { id: shipment.id } },
+          });
+          if (
+            attempt &&
+            attempt.status !== 'FINISHED' &&
+            attempt.status !== 'FAILED'
+          ) {
+            attempt.status = 'CANCELLED';
+            await queryRunner.manager.save(DeliveryAttempt, attempt);
+          }
+
           await this.trackingsService.addTrackingRecord({
             order,
+            operatorId: operatorId,
             status: 'AT_HUB',
             note: `Hủy chuyến xe ${shipment.shipment_code || shipment.id} do sự cố. Đơn hàng được giải phóng quay lại kho bãi.`,
           });

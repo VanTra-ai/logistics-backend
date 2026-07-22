@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Order } from './order.entity';
 import * as QRCode from 'qrcode';
 import PDFDocument from 'pdfkit';
+import * as path from 'path';
 
 // ─── Cấu hình nhãn dán ───────────────────────────────────────────────────────
 // Kích thước chuẩn A6: 105mm × 148mm = 297.6pt × 419.5pt (1pt = 1/72 inch = 0.353mm)
@@ -84,6 +85,24 @@ export class LabelService {
         },
       });
 
+      // Đăng ký font Roboto hỗ trợ Tiếng Việt
+      const fontRegular = path.join(
+        process.cwd(),
+        'src',
+        'assets',
+        'fonts',
+        'Roboto-Regular.ttf',
+      );
+      const fontBold = path.join(
+        process.cwd(),
+        'src',
+        'assets',
+        'fonts',
+        'Roboto-Bold.ttf',
+      );
+      doc.registerFont('Roboto', fontRegular);
+      doc.registerFont('Roboto-Bold', fontBold);
+
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -101,7 +120,7 @@ export class LabelService {
 
       // Tên thương hiệu
       doc
-        .font('Helvetica-Bold')
+        .font('Roboto-Bold')
         .fontSize(15)
         .fillColor(BRAND_WHITE)
         .text('VANTRA LOGISTICS', PAD, 11, {
@@ -114,7 +133,7 @@ export class LabelService {
         ? new Date(order.created_at).toLocaleDateString('vi-VN')
         : '';
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(7.5)
         .fillColor('#BBDEFB')
         .text(createdDate, A6_WIDTH_PT - 70, 16, { width: 60, align: 'right' });
@@ -127,7 +146,7 @@ export class LabelService {
 
       // Mã vận đơn lớn, nổi bật
       doc
-        .font('Helvetica-Bold')
+        .font('Roboto-Bold')
         .fontSize(20)
         .fillColor(BRAND_PRIMARY)
         .text(order.tracking_number, PAD, TN_ZONE_Y, {
@@ -137,7 +156,7 @@ export class LabelService {
 
       // Label phụ bên dưới mã vận đơn
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(7)
         .fillColor(GRAY_MEDIUM)
         .text('Mã vận đơn • Quét để cập nhật trạng thái', PAD, TN_ZONE_Y + 23, {
@@ -160,13 +179,13 @@ export class LabelService {
         .fill(GRAY_LIGHT);
 
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(7)
         .fillColor(GRAY_MEDIUM)
         .text('NGƯỜI NHẬN', PAD, RECV_Y + 2);
 
       doc
-        .font('Helvetica-Bold')
+        .font('Roboto-Bold')
         .fontSize(13)
         .fillColor(GRAY_DARK)
         .text(truncate(order.receiver_name, 30), PAD, RECV_Y + 13, {
@@ -174,13 +193,13 @@ export class LabelService {
         });
 
       doc
-        .font('Helvetica-Bold')
+        .font('Roboto-Bold')
         .fontSize(11)
         .fillColor(GRAY_DARK)
         .text(order.receiver_phone, PAD, RECV_Y + 30, { width: contentWidth });
 
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(8.5)
         .fillColor(GRAY_DARK)
         .text(truncate(order.receiver_address, 80), PAD, RECV_Y + 44, {
@@ -206,13 +225,13 @@ export class LabelService {
       const SEND_Y = DIV_Y + 6;
 
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(7)
         .fillColor(GRAY_MEDIUM)
         .text('NGƯỜI GỬI', PAD, SEND_Y);
 
       doc
-        .font('Helvetica-Bold')
+        .font('Roboto-Bold')
         .fontSize(9)
         .fillColor(GRAY_DARK)
         .text(truncate(order.sender_name, 35), PAD, SEND_Y + 10, {
@@ -220,7 +239,7 @@ export class LabelService {
         });
 
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(8.5)
         .fillColor(GRAY_DARK)
         .text(order.sender_phone, PAD, SEND_Y + 22, {
@@ -237,12 +256,12 @@ export class LabelService {
       // Bưu cục nhận hàng (góc phải)
       if (order.pickup_hub) {
         doc
-          .font('Helvetica')
+          .font('Roboto')
           .fontSize(7)
           .fillColor(GRAY_MEDIUM)
           .text('BƯU CỤC', A6_WIDTH_PT / 2 + 10, SEND_Y, { align: 'left' });
         doc
-          .font('Helvetica-Bold')
+          .font('Roboto-Bold')
           .fontSize(8)
           .fillColor(BRAND_PRIMARY)
           .text(
@@ -303,13 +322,13 @@ export class LabelService {
       // ── Cột 3: COD (nổi bật màu đỏ nếu có) ──
       const codAmount = Number(order.cod_amount);
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(7)
         .fillColor(GRAY_MEDIUM)
         .text('TIỀN THU HỘ (COD)', COL3_X, FOOTER_Y + 4);
 
       doc
-        .font('Helvetica-Bold')
+        .font('Roboto-Bold')
         .fontSize(11)
         .fillColor(codAmount > 0 ? DANGER_RED : GRAY_MEDIUM)
         .text(
@@ -324,7 +343,7 @@ export class LabelService {
       // ── Ghi chú đơn hàng ──
       if (order.note) {
         doc
-          .font('Helvetica')
+          .font('Roboto')
           .fontSize(7)
           .fillColor(GRAY_MEDIUM)
           .text(`Ghi chú: ${truncate(order.note, 60)}`, PAD, FOOTER_Y + 46, {
@@ -336,7 +355,7 @@ export class LabelService {
       doc.rect(0, A6_HEIGHT_PT - 12, A6_WIDTH_PT, 12).fill(BRAND_PRIMARY);
 
       doc
-        .font('Helvetica')
+        .font('Roboto')
         .fontSize(6)
         .fillColor(BRAND_WHITE)
         .text(
@@ -363,9 +382,9 @@ function _drawFooterCell(
   value: string,
   valueFontSize = 10,
 ) {
-  doc.font('Helvetica').fontSize(7).fillColor(GRAY_MEDIUM).text(label, x, y);
+  doc.font('Roboto').fontSize(7).fillColor(GRAY_MEDIUM).text(label, x, y);
   doc
-    .font('Helvetica-Bold')
+    .font('Roboto-Bold')
     .fontSize(valueFontSize)
     .fillColor(GRAY_DARK)
     .text(value, x, y + 10);

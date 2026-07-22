@@ -3,8 +3,10 @@ import {
   PrimaryGeneratedColumn,
   Column,
   OneToOne,
+  OneToMany,
   JoinColumn,
 } from 'typeorm';
+import { Transaction } from './transaction.entity';
 import { User } from '../users/user.entity';
 import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
@@ -32,4 +34,7 @@ export class Wallet {
     transformer: new ColumnNumericTransformer(),
   })
   cod_debt!: number;
+
+  @OneToMany(() => Transaction, (transaction) => transaction.wallet)
+  transactions!: Transaction[];
 }

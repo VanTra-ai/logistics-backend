@@ -14,6 +14,8 @@ import { TrackingsService } from '../trackings/trackings.service';
 import { User } from '../users/user.entity';
 import { Wallet } from '../wallets/wallet.entity';
 import { Transaction } from '../wallets/transaction.entity';
+import { Shipment } from '../shipments/shipment.entity';
+import { DeliveryAttempt } from '../shipments/delivery-attempt.entity';
 import { FinanceService } from '../finance/finance.service';
 import { FinanceTariff } from '../finance/finance.entity';
 import {
@@ -57,11 +59,31 @@ export class CreateOrderDto {
   @IsNotEmpty()
   receiver_address!: string;
 
+  @IsString()
+  @IsOptional()
+  sender_province_code?: string;
+  @IsString()
+  @IsOptional()
+  sender_ward_code?: string;
+  @IsString()
+  @IsOptional()
+  sender_street?: string;
+
+  @IsString()
+  @IsOptional()
+  receiver_province_code?: string;
+  @IsString()
+  @IsOptional()
+  receiver_ward_code?: string;
+  @IsString()
+  @IsOptional()
+  receiver_street?: string;
+
   @IsNumber()
-  @IsNotEmpty()
-  @Min(0.01, { message: 'Khối lượng phải tối thiểu 0.01 kg' })
+  @IsOptional()
+  @Min(0)
   @Max(5000, { message: 'Khối lượng tối đa là 5000 kg' })
-  weight!: number;
+  weight?: number;
 
   @IsNumber()
   @IsNotEmpty()
@@ -376,7 +398,25 @@ export class OrdersService {
     const trackingNumber = this.generateTrackingNumber();
 
     const tariff = await this.financeService.getTariff(data.pickup_hub_id);
-    const { shippingFee, codFee } = this.calculateShippingFees(data, tariff);
+
+    const length = Number(data.length) || 0;
+    const width = Number(data.width) || 0;
+    const height = Number(data.height) || 0;
+    const divisor = Number(tariff.volumetric_divisor) || 5000;
+    const bulkWeight = divisor > 0 ? (length * width * height) / divisor : 0;
+    const rawWeight = Number(data.weight) || 0;
+    const finalWeight = Math.max(rawWeight, bulkWeight);
+
+    if (finalWeight <= 0) {
+      throw new BadRequestException(
+        'Vui lòng nhập cân nặng thực tế hoặc kích thước (Dài x Rộng x Cao) của bưu kiện!',
+      );
+    }
+
+    const { shippingFee, codFee } = this.calculateShippingFees(
+      { ...data, weight: finalWeight },
+      tariff,
+    );
 
     const newOrder = this.ordersRepository.create({
       tracking_number: trackingNumber,
@@ -384,10 +424,17 @@ export class OrdersService {
       sender_name: data.sender_name,
       sender_phone: data.sender_phone,
       sender_address: data.sender_address,
+      sender_province_code: data.sender_province_code,
+      sender_ward_code: data.sender_ward_code,
+      sender_street: data.sender_street,
+
       receiver_name: data.receiver_name,
       receiver_phone: data.receiver_phone,
       receiver_address: data.receiver_address,
-      weight: data.weight,
+      receiver_province_code: data.receiver_province_code,
+      receiver_ward_code: data.receiver_ward_code,
+      receiver_street: data.receiver_street,
+      weight: finalWeight,
       length: data.length,
       width: data.width,
       height: data.height,
@@ -438,7 +485,7 @@ export class OrdersService {
     return await this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, {
         where: { id },
-        relations: { shipper: true },
+        relations: { shipper: true, shipment: { shipper: true } },
       });
 
       if (!order) {
@@ -446,7 +493,10 @@ export class OrdersService {
       }
 
       if (currentUser?.role === 'SHIPPER') {
-        if (!order.shipper || order.shipper.id !== currentUser.userId) {
+        const isDirectShipper = order.shipper?.id === currentUser.userId;
+        const isShipmentShipper =
+          order.shipment?.shipper?.id === currentUser.userId;
+        if (!isDirectShipper && !isShipmentShipper) {
           throw new ForbiddenException(
             'Shipper chỉ được cập nhật trạng thái đơn hàng của mình!',
           );
@@ -524,7 +574,11 @@ export class OrdersService {
     }
 
     if (status && status !== 'ALL') {
-      where.current_status = status;
+      if (status.includes(',')) {
+        where.current_status = In(status.split(','));
+      } else {
+        where.current_status = status;
+      }
     }
 
     // Apply search logic using array of where conditions for OR clauses
@@ -537,6 +591,8 @@ export class OrdersService {
         { ...where, sender_name: ILike(searchPattern) },
         { ...where, receiver_name: ILike(searchPattern) },
         { ...where, receiver_phone: ILike(searchPattern) },
+        { ...where, sender_address: ILike(searchPattern) },
+        { ...where, receiver_address: ILike(searchPattern) },
       ];
     }
 
@@ -575,25 +631,139 @@ export class OrdersService {
     return order;
   }
 
-  async getStatistics() {
-    const stats: OrderStats[] = await this.ordersRepository
-      .createQueryBuilder('order')
+  async getStatistics(
+    user?: { userId: string; role: string; hubId?: string },
+    startDateStr?: string,
+    endDateStr?: string,
+    hubIdParam?: string,
+  ) {
+    const kpiGroups = [
+      {
+        kpi_group: 'Đang thu gom',
+        statuses: ['PENDING', 'ASSIGNED', 'PICKING', 'PICKED'],
+      },
+      {
+        kpi_group: 'Đang vận hành',
+        statuses: ['AT_HUB', 'IN_TRANSIT', 'DELIVERING'],
+      },
+      { kpi_group: 'Sự cố & Đang hoàn', statuses: ['FAILED', 'RETURNING'] },
+      { kpi_group: 'Thành công', statuses: ['FINISHED'] },
+      { kpi_group: 'Đã trả hàng', statuses: ['RETURNED'] },
+      { kpi_group: 'Đã hủy', statuses: ['CANCELLED'] },
+    ];
+
+    const transformStats = (
+      stats: { status: string; count: string | number }[],
+    ) => {
+      return kpiGroups.map((group) => {
+        const details = group.statuses.map((status) => {
+          const found = stats.find((s) => s.status === status);
+          return {
+            status,
+            count: found ? parseInt(found.count as string, 10) : 0,
+          };
+        });
+        const total_count = details.reduce((acc, curr) => acc + curr.count, 0);
+        return { kpi_group: group.kpi_group, total_count, details };
+      });
+    };
+
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (startDateStr) {
+      startDate = new Date(startDateStr);
+      startDate.setHours(0, 0, 0, 0);
+    }
+    if (endDateStr) {
+      endDate = new Date(endDateStr);
+      endDate.setHours(23, 59, 59, 999);
+    }
+
+    if (user?.role === 'SHIPPER') {
+      const query = this.ordersRepository.createQueryBuilder('order');
+      // Orders are assigned to shippers via shipment, not directly
+      // Join: order -> shipment -> shipper
+      query
+        .leftJoin('order.shipment', 'shipment')
+        .leftJoin('shipment.shipper', 'shipper')
+        .where('shipper.id = :userId', { userId: user.userId });
+
+      if (startDate && endDate) {
+        query.andWhere('order.updated_at BETWEEN :startDate AND :endDate', {
+          startDate,
+          endDate,
+        });
+      } else if (startDate) {
+        query.andWhere('order.updated_at >= :startDate', { startDate });
+      } else if (endDate) {
+        query.andWhere('order.updated_at <= :endDate', { endDate });
+      }
+
+      const stats = await query
+        .clone()
+        .select('order.current_status', 'status')
+        .addSelect('COUNT(order.id)', 'count')
+        .groupBy('order.current_status')
+        .getRawMany<{ status: string; count: string | number }>();
+
+      const prodStats = await query
+        .clone()
+        .andWhere('order.current_status = :finishedStatus', {
+          finishedStatus: 'FINISHED',
+        })
+        .select('DATE(order.updated_at)', 'date')
+        .addSelect('COUNT(order.id)', 'count')
+        .groupBy('DATE(order.updated_at)')
+        .orderBy('DATE(order.updated_at)', 'ASC')
+        .getRawMany<{ date: string | Date; count: string | number }>();
+
+      const productivity = prodStats.map((p) => ({
+        date: new Date(p.date).toISOString().split('T')[0],
+        count: parseInt(p.count as string, 10),
+      }));
+
+      return {
+        message: 'Lấy thống kê đơn hàng thành công!',
+        data: transformStats(stats),
+        productivity,
+      };
+    }
+
+    const query = this.ordersRepository.createQueryBuilder('order');
+
+    if (user?.role === 'HUB_COORDINATOR') {
+      query.leftJoin('order.pickup_hub', 'pickup_hub');
+      query.andWhere('pickup_hub.id = :hubId', { hubId: user.hubId });
+    } else if (user?.role === 'ADMIN' && hubIdParam && hubIdParam !== 'ALL') {
+      query.leftJoin('order.pickup_hub', 'pickup_hub');
+      query.andWhere('pickup_hub.id = :hubId', { hubId: hubIdParam });
+    }
+
+    if (startDate && endDate) {
+      query.andWhere('order.created_at BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      });
+    } else if (startDate) {
+      query.andWhere('order.created_at >= :startDate', { startDate });
+    } else if (endDate) {
+      query.andWhere('order.created_at <= :endDate', { endDate });
+    }
+
+    const stats: OrderStats[] = await query
+      .clone()
       .select('order.current_status', 'status')
       .addSelect('COUNT(order.id)', 'count')
       .groupBy('order.current_status')
       .getRawMany();
 
-    const allStatuses = ['PENDING', 'DELIVERING', 'FINISHED', 'CANCELLED'];
+    const productivity: { date: string; count: number }[] = [];
 
     return {
       message: 'Lấy thống kê đơn hàng thành công!',
-      data: allStatuses.map((status) => {
-        const found = stats.find((s) => s.status === status);
-        return {
-          status,
-          count: found ? parseInt(found.count as string, 10) : 0,
-        };
-      }),
+      data: transformStats(stats),
+      productivity,
     };
   }
 
@@ -601,6 +771,7 @@ export class OrdersService {
     id: string,
     reason: string,
     cancelledBy: 'SHIPPER' | 'ADMIN',
+    operatorId?: string,
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id },
@@ -656,6 +827,7 @@ export class OrdersService {
 
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: order,
+      operatorId: operatorId,
       status: 'CANCELLED',
       note: `Đơn hàng đã bị hủy bởi ${actor}. Lý do: ${reason}`,
     });
@@ -685,6 +857,7 @@ export class OrdersService {
     orderId: string,
     shipperId: string,
     currentUser?: { role: string; hubId?: string },
+    operatorId?: string,
   ): Promise<Order> {
     // Trạm 1: Kiểm tra đơn hàng
     const order = await this.ordersRepository.findOne({
@@ -742,6 +915,7 @@ export class OrdersService {
     // Ghi log hành trình
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
+      operatorId: operatorId,
       status: 'ASSIGNED',
       note: `Đơn hàng đã được phân công cho Shipper: ${shipper.full_name}`,
     });
@@ -810,10 +984,45 @@ export class OrdersService {
       // Map to store original statuses to flag `is_return`
       const originalStatuses = new Map<string, string>();
 
-      // 3. Cập nhật trạng thái đồng loạt sang AT_HUB
+      // 3. Cập nhật trạng thái đồng loạt sang AT_HUB & cộng thù lao lấy hàng cho Shipper nếu có
       for (const order of validOrders) {
-        originalStatuses.set(order.id, order.current_status);
+        const prevStatus = order.current_status;
+        originalStatuses.set(order.id, prevStatus);
         order.current_status = 'AT_HUB';
+
+        if (
+          order.shipper &&
+          ['PENDING', 'ASSIGNED', 'PICKING', 'PICKED'].includes(prevStatus)
+        ) {
+          const pickupShipper = order.shipper;
+          const tariff = await this.financeService.getTariff(
+            order.pickup_hub?.id,
+          );
+          const pickupPayout = Number(tariff.shipper_pickup_payout) || 2500;
+
+          let shipperWallet = await manager.findOne(Wallet, {
+            where: { user: { id: pickupShipper.id } },
+          });
+          if (!shipperWallet) {
+            shipperWallet = manager.create(Wallet, {
+              user: pickupShipper,
+              income_balance: 0,
+              cod_debt: 0,
+            });
+          }
+          shipperWallet.income_balance =
+            Number(shipperWallet.income_balance) + pickupPayout;
+          await manager.save(Wallet, shipperWallet);
+
+          const pickupTx = manager.create(Transaction, {
+            wallet: shipperWallet,
+            order: order,
+            amount: pickupPayout,
+            type: 'COMMISSION_EARNED',
+            description: `Thù lao lấy hàng thành công đơn ${order.tracking_number}`,
+          });
+          await manager.save(Transaction, pickupTx);
+        }
       }
 
       // Lưu một mảng dữ liệu cùng lúc để tối ưu hiệu năng (Bulk Update)
@@ -825,6 +1034,7 @@ export class OrdersService {
           this.eventEmitter.emitAsync('order.status.changed', {
             manager,
             order: order,
+            operatorId: actorUserId,
             status: 'AT_HUB',
             note: `Đơn hàng đã được nhập bưu cục ${order.pickup_hub?.name || 'Vô danh'} bởi ${actorName}`,
           }),
@@ -921,6 +1131,7 @@ export class OrdersService {
       // 4. Cập nhật trạng thái và "sang tên" Shipper giao hàng
       for (const order of validOrders) {
         order.current_status = 'DELIVERING';
+        order.dispatched_at = new Date();
         order.shipper = shipper; // Ghi đè Shipper đi lấy hàng bằng Shipper đi giao hàng
         await this.locationsService.removeOrderFromLocation(order, manager);
       }
@@ -934,6 +1145,7 @@ export class OrdersService {
           this.eventEmitter.emitAsync('order.status.changed', {
             manager,
             order: order,
+            operatorId: actorUserId,
             status: 'DELIVERING',
             note: `Đơn hàng đã xuất kho. Bàn giao cho Shipper: ${shipper.full_name} (${shipper.phone_number}). Thao tác bởi: ${actorName}`,
           }),
@@ -964,39 +1176,71 @@ export class OrdersService {
       // 1. Khóa dòng Order này lại để tránh các request status khác can thiệp
       const order = await queryRunner.manager.findOne(Order, {
         where: { id: orderId },
-        relations: { shipper: true, pickup_hub: true },
+        relations: {
+          shipper: true,
+          pickup_hub: true,
+          shipment: { shipper: true },
+        },
       });
 
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
 
       // Chốt chặn 1: Trạng thái
-      if (order.current_status !== 'DELIVERING') {
+      if (
+        order.current_status !== 'DELIVERING' &&
+        order.current_status !== 'RETURNING'
+      ) {
         throw new BadRequestException(
-          'Chỉ có thể hoàn tất đơn hàng đang ở trạng thái DELIVERING!',
+          'Chỉ có thể hoàn tất đơn hàng đang ở trạng thái DELIVERING hoặc RETURNING!',
         );
       }
 
+      const isDirectShipper = order.shipper?.id === shipperId;
+      const isShipmentShipper = order.shipment?.shipper?.id === shipperId;
+
       // Chốt chặn 2: Bảo mật phân quyền Shipper
       if (role !== 'ADMIN') {
-        if (!order.shipper || order.shipper.id !== shipperId) {
+        if (!isDirectShipper && !isShipmentShipper) {
           throw new BadRequestException(
             'Bạn không có quyền thao tác trên đơn hàng của người khác!',
           );
         }
       }
-      const actualShipperId = order.shipper ? order.shipper.id : shipperId;
+
+      const actualShipperId =
+        order.shipper?.id || order.shipment?.shipper?.id || shipperId;
 
       // Cập nhật dữ liệu
-      order.current_status = 'FINISHED';
+      if (order.current_status === 'RETURNING') {
+        order.current_status = 'RETURNED';
+      } else {
+        order.current_status = 'FINISHED';
+      }
       order.delivery_image_url = data.delivery_image_url;
 
       // Xử lý logic tiền thu hộ (COD)
-      // Chuyển trạng thái sang COLLECTED (Shipper đã cầm tiền khách, chờ nộp về bưu cục)
-      if (order.cod_amount > 0) {
+      // Chỉ thu COD khi giao hàng thành công cho khách (FINISHED), không thu khi trả hàng (RETURNED)
+      if (order.current_status === 'FINISHED' && order.cod_amount > 0) {
         order.cod_status = 'COLLECTED';
       }
 
       const savedOrder = await queryRunner.manager.save(Order, order);
+
+      // Cập nhật DeliveryAttempt để khóa lịch sử của tài xế này
+      if (savedOrder.shipment) {
+        const attempt = await queryRunner.manager.findOne(DeliveryAttempt, {
+          where: {
+            order: { id: savedOrder.id },
+            shipment: { id: savedOrder.shipment.id },
+          },
+        });
+        if (attempt) {
+          attempt.status =
+            savedOrder.current_status === 'RETURNED' ? 'FAILED' : 'FINISHED';
+          attempt.proof_image_url = data.delivery_image_url;
+          await queryRunner.manager.save(DeliveryAttempt, attempt);
+        }
+      }
 
       // Cập nhật ví và giao dịch cho tài xế & bưu cục
       const tariff = await this.financeService.getTariff(
@@ -1021,16 +1265,28 @@ export class OrdersService {
         await queryRunner.manager.save(Wallet, shipperWallet);
       }
 
-      const shipperPayoutPercent = Number(tariff.shipper_payout_percent);
-      const shipperPayout =
-        shipperPayoutPercent > 0
-          ? (Number(savedOrder.shipping_fee) * shipperPayoutPercent) / 100
-          : Number(tariff.shipper_payout_flat);
+      let shipperPayout = 0;
+      let payoutDescription = '';
+
+      if (savedOrder.current_status === 'RETURNED') {
+        shipperPayout = Number(tariff.shipper_return_payout) || 2500;
+        payoutDescription = `Thù lao trả hàng thành công đơn ${savedOrder.tracking_number}`;
+      } else {
+        const shipperPayoutPercent = Number(tariff.shipper_payout_percent);
+        shipperPayout =
+          shipperPayoutPercent > 0
+            ? (Number(savedOrder.shipping_fee) * shipperPayoutPercent) / 100
+            : Number(tariff.shipper_payout_flat);
+        payoutDescription = `Chiết khấu giao hàng thành công đơn ${savedOrder.tracking_number}`;
+      }
 
       shipperWallet.income_balance =
         Number(shipperWallet.income_balance) + shipperPayout;
 
-      if (savedOrder.cod_amount > 0) {
+      if (
+        savedOrder.current_status === 'FINISHED' &&
+        savedOrder.cod_amount > 0
+      ) {
         shipperWallet.cod_debt =
           Number(shipperWallet.cod_debt) + Number(savedOrder.cod_amount);
       }
@@ -1042,11 +1298,14 @@ export class OrdersService {
         order: savedOrder,
         amount: shipperPayout,
         type: 'COMMISSION_EARNED',
-        description: `Chiết khấu giao hàng thành công đơn ${savedOrder.tracking_number}`,
+        description: payoutDescription,
       });
       await queryRunner.manager.save(Transaction, payoutTx);
 
-      if (savedOrder.cod_amount > 0) {
+      if (
+        savedOrder.current_status === 'FINISHED' &&
+        savedOrder.cod_amount > 0
+      ) {
         const codLiabilityTx = queryRunner.manager.create(Transaction, {
           wallet: shipperWallet,
           order: savedOrder,
@@ -1103,13 +1362,33 @@ export class OrdersService {
         queryRunner.manager,
         {
           order: savedOrder,
-          status: 'FINISHED',
+          status: savedOrder.current_status,
           note: data.note || 'Giao hàng thành công. Khách đã nhận hàng.',
           lat: data.lat,
           long: data.long,
           imageUrl: data.delivery_image_url,
         },
       );
+
+      if (savedOrder.shipment) {
+        const shipmentOrders = await queryRunner.manager.find(Order, {
+          where: { shipment: { id: savedOrder.shipment.id } },
+        });
+        const allCompleted = shipmentOrders.every(
+          (o) =>
+            o.current_status === 'FINISHED' ||
+            o.current_status === 'RETURNING' ||
+            o.current_status === 'RETURNED_TO_SENDER' ||
+            o.current_status === 'CANCELLED',
+        );
+        if (allCompleted) {
+          await queryRunner.manager.update(
+            Shipment,
+            { id: savedOrder.shipment.id },
+            { status: 'COMPLETED' },
+          );
+        }
+      }
 
       await queryRunner.commitTransaction();
       return savedOrder;
@@ -1129,7 +1408,7 @@ export class OrdersService {
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
-      relations: { shipper: true },
+      relations: { shipper: true, shipment: { shipper: true } },
     });
 
     if (!order) throw new NotFoundException('Không tìm thấy đơn hàng!');
@@ -1141,8 +1420,11 @@ export class OrdersService {
       );
     }
 
+    const isDirectShipper = order.shipper?.id === userId;
+    const isShipmentShipper = order.shipment?.shipper?.id === userId;
+
     // 2. Chốt chặn phân quyền: Nếu là Shipper thì phải là chủ đơn hàng
-    if (role === 'SHIPPER' && (!order.shipper || order.shipper.id !== userId)) {
+    if (role === 'SHIPPER' && !isDirectShipper && !isShipmentShipper) {
       throw new BadRequestException(
         'Bạn không có quyền báo hoàn cho đơn hàng của người khác!',
       );
@@ -1156,6 +1438,21 @@ export class OrdersService {
 
     const savedOrder = await this.ordersRepository.save(order);
 
+    // Cập nhật DeliveryAttempt thành FAILED (giao thất bại)
+    if (savedOrder.shipment) {
+      const attempt = await this.dataSource.manager.findOne(DeliveryAttempt, {
+        where: {
+          order: { id: savedOrder.id },
+          shipment: { id: savedOrder.shipment.id },
+        },
+      });
+      if (attempt) {
+        attempt.status = 'FAILED';
+        attempt.failure_reason = data.reason;
+        await this.dataSource.manager.save(DeliveryAttempt, attempt);
+      }
+    }
+
     // 4. Ghi log hành trình
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
@@ -1165,6 +1462,26 @@ export class OrdersService {
       long: data.long,
     });
 
+    if (savedOrder.shipment) {
+      const shipmentOrders = await this.ordersRepository.find({
+        where: { shipment: { id: savedOrder.shipment.id } },
+      });
+      const allCompleted = shipmentOrders.every(
+        (o) =>
+          o.current_status === 'FINISHED' ||
+          o.current_status === 'RETURNING' ||
+          o.current_status === 'RETURNED_TO_SENDER' ||
+          o.current_status === 'CANCELLED',
+      );
+      if (allCompleted) {
+        await this.dataSource.manager.update(
+          Shipment,
+          { id: savedOrder.shipment.id },
+          { status: 'COMPLETED' },
+        );
+      }
+    }
+
     return savedOrder;
   }
 
@@ -1173,6 +1490,7 @@ export class OrdersService {
     orderId: string,
     data: RetryOrderDto,
     actorName: string,
+    operatorId?: string,
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
@@ -1194,6 +1512,7 @@ export class OrdersService {
 
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
+      operatorId: operatorId,
       status: 'AT_HUB',
       note: `Đơn hàng được yêu cầu giao lại. Thao tác bởi: ${actorName}`,
     });
@@ -1206,6 +1525,7 @@ export class OrdersService {
     orderId: string,
     data: RtsOrderDto,
     actorName: string,
+    operatorId?: string,
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
@@ -1219,8 +1539,8 @@ export class OrdersService {
       );
     }
 
-    // Chuyển sang trạng thái chuyển hoàn
-    order.current_status = 'RETURNING';
+    // Chuyển sang trạng thái chờ chuyển hoàn
+    order.current_status = 'RETURN_TO_SENDER';
 
     const savedOrder = await this.ordersRepository.save(order);
 
@@ -1228,14 +1548,15 @@ export class OrdersService {
     const noteReason = data.reason ? ` Lý do: ${data.reason}` : '';
     await this.eventEmitter.emitAsync('order.status.changed', {
       order: savedOrder,
-      status: 'RETURNING',
-      note: `Đơn hàng xuất kho, chuyển hoàn về cho người gửi.${noteReason} Thao tác bởi: ${actorName}`,
+      operatorId: operatorId,
+      status: 'RETURN_TO_SENDER',
+      note: `Đơn hàng được yêu cầu chuyển hoàn về cho người gửi.${noteReason} Thao tác bởi: ${actorName}`,
     });
 
     return savedOrder;
   }
 
-  async remitCOD(orderIds: string[], adminName: string) {
+  async remitCOD(orderIds: string[], adminName: string, operatorId?: string) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -1306,6 +1627,7 @@ export class OrdersService {
             {
               order: order,
               status: 'FINISHED',
+              operatorId: operatorId,
               note: `Đã đối soát tiền thu hộ (COD) thành công. Người thu: ${adminName}`,
             },
           ),
@@ -1407,6 +1729,7 @@ export class OrdersService {
     orderId: string,
     data: UpdateDimensionsDto,
     actorName: string,
+    operatorId?: string,
   ) {
     return await this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, { where: { id: orderId } });
@@ -1446,6 +1769,7 @@ export class OrdersService {
         await this.eventEmitter.emitAsync('order.status.changed', {
           manager,
           order: savedOrder,
+          operatorId: operatorId,
           status: savedOrder.current_status,
           note: `Thay đổi thông số đơn hàng bởi ${actorName}. Cân nặng: ${oldWeight}kg -> ${data.weight}kg. Cước phí thay đổi: ${diff > 0 ? '+' : ''}${diff.toLocaleString('vi-VN')}đ.`,
         });
@@ -1453,5 +1777,14 @@ export class OrdersService {
 
       return savedOrder;
     });
+  }
+
+  async getDeliveryAttempts(orderId: string): Promise<DeliveryAttempt[]> {
+    const attempts = await this.dataSource.manager.find(DeliveryAttempt, {
+      where: { order: { id: orderId } },
+      relations: { shipper: true, shipment: true },
+      order: { created_at: 'DESC' },
+    });
+    return attempts;
   }
 }

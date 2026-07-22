@@ -120,9 +120,6 @@ export class UsersController {
     @Query('hubId') queryHubId?: string,
   ) {
     const targetHubId = req.user.role === 'ADMIN' ? queryHubId : req.user.hubId;
-    if (!targetHubId) {
-      throw new ForbiddenException('Vui lòng chọn bưu cục để điều phối');
-    }
     const shippers = await this.usersService.findDispatchShippers(targetHubId);
     return { data: shippers };
   }

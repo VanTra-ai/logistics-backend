@@ -11,6 +11,7 @@ import { Hub } from './hubs/hub.entity';
 import { Order } from './orders/order.entity';
 import { TrackingHistory } from './trackings/tracking.entity';
 import { Shipment } from './shipments/shipment.entity';
+import { DeliveryAttempt } from './shipments/delivery-attempt.entity';
 import { Address } from './addresses/address.entity';
 import { Wallet } from './wallets/wallet.entity';
 import { Transaction } from './wallets/transaction.entity';
@@ -52,6 +53,11 @@ import { WalletsModule } from './wallets/wallets.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { Notification } from './notifications/notification.entity';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { GeoModule } from './geo/geo.module';
+import { VietnamProvince, VietnamWard } from './geo/geo.entity';
+import { Vehicle } from './vehicles/vehicle.entity';
+import { VehiclesModule } from './vehicles/vehicles.module';
+import { PasswordResetOtp } from './auth/password-reset-otp.entity';
 
 @Module({
   imports: [
@@ -69,6 +75,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
         Order,
         TrackingHistory,
         Shipment,
+        DeliveryAttempt,
         Address,
         Wallet,
         Transaction,
@@ -87,6 +94,10 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
         Notification,
         WalletRequest,
         TicketComment,
+        VietnamProvince,
+        VietnamWard,
+        Vehicle,
+        PasswordResetOtp,
       ],
       synchronize: true, // TypeORM sẽ tự tạo bảng mới dựa trên các Entity này
     }),
@@ -112,6 +123,8 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
     ScheduleModule.forRoot(),
     NotificationsModule,
     EventEmitterModule.forRoot(),
+    GeoModule,
+    VehiclesModule,
   ],
   controllers: [],
   providers: [

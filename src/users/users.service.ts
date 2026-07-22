@@ -262,8 +262,8 @@ export class UsersService {
     };
   }
 
-  async findDispatchShippers(hubId: string): Promise<any[]> {
-    const rawData = await this.usersRepository
+  async findDispatchShippers(hubId?: string): Promise<any[]> {
+    const qb = this.usersRepository
       .createQueryBuilder('user')
       .leftJoinAndSelect(
         'shipments',
@@ -271,8 +271,13 @@ export class UsersService {
         'shipment.shipperId = user.id AND shipment.status IN (:...statuses)',
         { statuses: ['PENDING', 'IN_TRANSIT'] },
       )
-      .where('user.role = :role', { role: 'SHIPPER' })
-      .andWhere('user.hubId = :hubId', { hubId })
+      .where('user.role = :role', { role: 'SHIPPER' });
+
+    if (hubId) {
+      qb.andWhere('user.hubId = :hubId', { hubId });
+    }
+
+    const rawData = await qb
       .select([
         'user.id AS id',
         'user.full_name AS full_name',

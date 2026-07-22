@@ -7,6 +7,7 @@ import { ExportsController } from './exports.controller';
 import { LabelService } from './label.service';
 import { OrdersExcelService } from './orders-excel.service';
 import { Order } from './order.entity';
+import { DeliveryAttempt } from '../shipments/delivery-attempt.entity';
 import { User } from '../users/user.entity';
 import { Wallet } from '../wallets/wallet.entity';
 import { Transaction } from '../wallets/transaction.entity';
@@ -19,7 +20,13 @@ import { OrdersListener } from './orders.listener';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, User, Wallet, Transaction]),
+    TypeOrmModule.forFeature([
+      Order,
+      DeliveryAttempt,
+      User,
+      Wallet,
+      Transaction,
+    ]),
     HubsModule,
     TrackingsModule,
     FinanceModule,

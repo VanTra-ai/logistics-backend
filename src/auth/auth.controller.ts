@@ -36,4 +36,24 @@ export class AuthController {
   async refresh(@Body() refreshTokenDto: RefreshTokenDto) {
     return this.authService.refreshToken(refreshTokenDto.refresh_token);
   }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() body: { email: string }) {
+    return await this.authService.requestForgotPasswordOtp(body.email);
+  }
+
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  async verifyOtp(@Body() body: { email: string; otp: string }) {
+    return await this.authService.verifyForgotPasswordOtp(body.email, body.otp);
+  }
+
+  @Post('reset-password-otp')
+  @HttpCode(HttpStatus.OK)
+  async resetPasswordOtp(
+    @Body() body: { email: string; otp: string; newPassword: string },
+  ) {
+    return await this.authService.resetPasswordWithOtp(body);
+  }
 }

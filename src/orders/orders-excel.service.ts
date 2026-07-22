@@ -56,6 +56,9 @@ export class OrdersExcelService {
       receiver_address: -1,
       weight: -1,
       cod: -1,
+      length: -1,
+      width: -1,
+      height: -1,
     };
     worksheet.getRow(1).eachCell((cell, colNumber) => {
       const header = cell.text?.toLowerCase().trim() || '';
@@ -92,6 +95,12 @@ export class OrdersExcelService {
         colMap.weight = colNumber;
       else if (header.includes('cod') || header.includes('thu hộ'))
         colMap.cod = colNumber;
+      else if (header.includes('dài') || header.includes('length'))
+        colMap.length = colNumber;
+      else if (header.includes('rộng') || header.includes('width'))
+        colMap.width = colNumber;
+      else if (header.includes('cao') || header.includes('height'))
+        colMap.height = colNumber;
     });
 
     // Fallback if no matching headers found, assume standard format (either 9 or 8 columns)
@@ -150,6 +159,12 @@ export class OrdersExcelService {
       const weightStr =
         colMap.weight > 0 ? row.getCell(colMap.weight).text?.trim() : '';
       const codStr = colMap.cod > 0 ? row.getCell(colMap.cod).text?.trim() : '';
+      const lengthStr =
+        colMap.length > 0 ? row.getCell(colMap.length).text?.trim() : '';
+      const widthStr =
+        colMap.width > 0 ? row.getCell(colMap.width).text?.trim() : '';
+      const heightStr =
+        colMap.height > 0 ? row.getCell(colMap.height).text?.trim() : '';
 
       const rowErrorDetails: string[] = [];
 
@@ -160,16 +175,30 @@ export class OrdersExcelService {
       if (!receiver_phone) rowErrorDetails.push('Thiếu SĐT nhận');
       if (!receiver_address) rowErrorDetails.push('Thiếu Địa chỉ nhận');
 
-      const weight = weightStr ? parseFloat(weightStr) : 0;
+      const length = lengthStr ? parseFloat(lengthStr) : 0;
+      const width = widthStr ? parseFloat(widthStr) : 0;
+      const height = heightStr ? parseFloat(heightStr) : 0;
+
+      const rawWeight = weightStr ? parseFloat(weightStr) : 0;
+      const divisor = Number(tariff.volumetric_divisor) || 5000;
+      const bulkWeight =
+        length > 0 && width > 0 && height > 0 && divisor > 0
+          ? (length * width * height) / divisor
+          : 0;
+      const weight = Math.max(rawWeight, bulkWeight);
       const cod_amount = codStr ? parseFloat(codStr) : 0;
       const distance = 5;
 
-      if (isNaN(weight)) rowErrorDetails.push('Khối lượng không hợp lệ');
+      if (weight <= 0)
+        rowErrorDetails.push(
+          'Thiếu Khối lượng hoặc Kích thước (Dài x Rộng x Cao)',
+        );
       if (isNaN(cod_amount)) rowErrorDetails.push('COD không hợp lệ');
 
       if (rowErrorDetails.length > 0) {
         rowErrors.push({ row: rowNumber, errors: rowErrorDetails });
       } else {
+        const surplusPrice = Number(tariff.surplus_weight_price) || 5000;
         ordersToCreate.push({
           tracking_number,
           sender_name,
@@ -179,12 +208,15 @@ export class OrdersExcelService {
           receiver_phone,
           receiver_address,
           weight,
+          length,
+          width,
+          height,
           cod_amount,
           shipping_fee:
             Number(tariff.base_price_distance) +
             Math.max(0, distance - Number(tariff.base_distance_limit)) *
               Number(tariff.block_price_distance) +
-            Math.max(0, weight - 2) * 5000,
+            Math.max(0, weight - 2) * surplusPrice,
           cod_fee:
             cod_amount > 0
               ? (cod_amount * Number(tariff.cod_fee_percent)) / 100
@@ -279,6 +311,9 @@ export class OrdersExcelService {
       receiver_address: -1,
       weight: -1,
       cod: -1,
+      length: -1,
+      width: -1,
+      height: -1,
     };
     worksheet.getRow(1).eachCell((cell, colNumber) => {
       const header = cell.text?.toLowerCase().trim() || '';
@@ -315,6 +350,12 @@ export class OrdersExcelService {
         colMap.weight = colNumber;
       else if (header.includes('cod') || header.includes('thu hộ'))
         colMap.cod = colNumber;
+      else if (header.includes('dài') || header.includes('length'))
+        colMap.length = colNumber;
+      else if (header.includes('rộng') || header.includes('width'))
+        colMap.width = colNumber;
+      else if (header.includes('cao') || header.includes('height'))
+        colMap.height = colNumber;
     });
 
     if (colMap.sender_name === -1) {
@@ -372,6 +413,12 @@ export class OrdersExcelService {
       const weightStr =
         colMap.weight > 0 ? row.getCell(colMap.weight).text?.trim() : '';
       const codStr = colMap.cod > 0 ? row.getCell(colMap.cod).text?.trim() : '';
+      const lengthStr =
+        colMap.length > 0 ? row.getCell(colMap.length).text?.trim() : '';
+      const widthStr =
+        colMap.width > 0 ? row.getCell(colMap.width).text?.trim() : '';
+      const heightStr =
+        colMap.height > 0 ? row.getCell(colMap.height).text?.trim() : '';
 
       const rowErrorDetails: string[] = [];
 
@@ -382,16 +429,30 @@ export class OrdersExcelService {
       if (!receiver_phone) rowErrorDetails.push('Thiếu SĐT nhận');
       if (!receiver_address) rowErrorDetails.push('Thiếu Địa chỉ nhận');
 
-      const weight = weightStr ? parseFloat(weightStr) : 0;
+      const length = lengthStr ? parseFloat(lengthStr) : 0;
+      const width = widthStr ? parseFloat(widthStr) : 0;
+      const height = heightStr ? parseFloat(heightStr) : 0;
+
+      const rawWeight = weightStr ? parseFloat(weightStr) : 0;
+      const divisor = Number(tariff.volumetric_divisor) || 5000;
+      const bulkWeight =
+        length > 0 && width > 0 && height > 0 && divisor > 0
+          ? (length * width * height) / divisor
+          : 0;
+      const weight = Math.max(rawWeight, bulkWeight);
       const cod_amount = codStr ? parseFloat(codStr) : 0;
       const distance = 5;
 
-      if (isNaN(weight)) rowErrorDetails.push('Khối lượng không hợp lệ');
+      if (weight <= 0)
+        rowErrorDetails.push(
+          'Thiếu Khối lượng hoặc Kích thước (Dài x Rộng x Cao)',
+        );
       if (isNaN(cod_amount)) rowErrorDetails.push('COD không hợp lệ');
 
       if (rowErrorDetails.length > 0) {
         rowErrors.push({ row: rowNumber, errors: rowErrorDetails });
       } else {
+        const surplusPrice = Number(tariff.surplus_weight_price) || 5000;
         ordersToCreate.push({
           tracking_number,
           sender_name,
@@ -401,12 +462,15 @@ export class OrdersExcelService {
           receiver_phone,
           receiver_address,
           weight,
+          length,
+          width,
+          height,
           cod_amount,
           shipping_fee:
             Number(tariff.base_price_distance) +
             Math.max(0, distance - Number(tariff.base_distance_limit)) *
               Number(tariff.block_price_distance) +
-            Math.max(0, weight - 2) * 5000,
+            Math.max(0, weight - 2) * surplusPrice,
           cod_fee:
             cod_amount > 0
               ? (cod_amount * Number(tariff.cod_fee_percent)) / 100

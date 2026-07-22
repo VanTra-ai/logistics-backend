@@ -15,6 +15,9 @@ import { ColumnNumericTransformer } from '../common/utils/column-numeric-transfo
 
 @Entity('orders')
 export class Order {
+  @Column({ type: 'timestamp', nullable: true })
+  dispatched_at?: Date;
+
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -33,6 +36,14 @@ export class Order {
   @Column('text')
   sender_address!: string;
 
+  // Cấu trúc địa giới 2 cấp (Province -> Ward)
+  @Column({ nullable: true })
+  sender_province_code?: string;
+  @Column({ nullable: true })
+  sender_ward_code?: string;
+  @Column({ nullable: true })
+  sender_street?: string;
+
   // 3. Thông tin Người nhận
   @Column()
   receiver_name!: string;
@@ -40,6 +51,13 @@ export class Order {
   receiver_phone!: string;
   @Column('text')
   receiver_address!: string;
+
+  @Column({ nullable: true })
+  receiver_province_code?: string;
+  @Column({ nullable: true })
+  receiver_ward_code?: string;
+  @Column({ nullable: true })
+  receiver_street?: string;
 
   // 4. Thông số hàng hóa & Tài chính
   @Column('decimal', {

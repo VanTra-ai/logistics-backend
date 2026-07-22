@@ -43,25 +43,40 @@ export class IncidentsController {
     }),
   )
   create(
+    @Request() req: { user: { userId: string } },
     @Body() createIncidentDto: CreateIncidentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     const proof_image_url = file
       ? `/public/uploads/incidents/${file.filename}`
       : undefined;
-    return this.incidentsService.create(createIncidentDto, proof_image_url);
+    return this.incidentsService.create(
+      createIncidentDto,
+      req.user.userId,
+      proof_image_url,
+    );
   }
 
   @Get()
   @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
   findAll(
+    @Request() req: { user: { userId: string; role?: string; hubId?: string } },
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('type') type?: string,
+    @Query('hubId') hubId?: string,
+    @Query('search') search?: string,
   ) {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
-    return this.incidentsService.findAll(pageNum, limitNum, type);
+    return this.incidentsService.findAll(
+      pageNum,
+      limitNum,
+      type,
+      hubId,
+      search,
+      req.user,
+    );
   }
 
   @Patch(':id/resolve')

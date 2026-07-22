@@ -11,6 +11,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from '../users/user.entity';
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { ResolveIncidentDto, ResolveAction } from './dto/resolve-incident.dto';
+import { Shipment } from '../shipments/shipment.entity';
+import { DeliveryAttempt } from '../shipments/delivery-attempt.entity';
 
 @Injectable()
 export class IncidentsService {
@@ -25,30 +27,64 @@ export class IncidentsService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  async create(createIncidentDto: CreateIncidentDto, proof_image_url?: string) {
+  async create(
+    createIncidentDto: CreateIncidentDto,
+    currentUserId?: string,
+    proof_image_url?: string,
+  ) {
     const { orderId, shipperId, reason, description } = createIncidentDto;
 
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
+      relations: { shipper: true, shipment: { shipper: true } },
     });
     if (!order) {
       throw new NotFoundException(`Order with ID ${orderId} not found`);
     }
 
     let shipper: User | null = null;
-    if (shipperId) {
+    const targetShipperId = shipperId || currentUserId;
+    if (targetShipperId) {
       const foundShipper = await this.userRepository.findOne({
-        where: { id: shipperId },
+        where: { id: targetShipperId },
       });
-      if (!foundShipper) {
-        throw new NotFoundException(`Shipper with ID ${shipperId} not found`);
+      if (
+        foundShipper &&
+        (foundShipper.role === 'SHIPPER' ||
+          foundShipper.role === 'HUB_COORDINATOR')
+      ) {
+        shipper = foundShipper;
       }
-      shipper = foundShipper;
+    }
+
+    // Fallback to order's assigned shipper or shipment shipper if still null
+    if (!shipper) {
+      shipper = order.shipper || order.shipment?.shipper || null;
     }
 
     // Update order status to FAILED
     order.current_status = 'FAILED';
     await this.orderRepository.save(order);
+
+    // Update DeliveryAttempt to FAILED
+    if (order.shipment) {
+      const attempt = await this.dataSource.manager.findOne(DeliveryAttempt, {
+        where: { order: { id: order.id }, shipment: { id: order.shipment.id } },
+      });
+      if (attempt) {
+        attempt.status = 'FAILED';
+        attempt.failure_reason = reason;
+        attempt.proof_image_url = proof_image_url as string;
+        await this.dataSource.manager.save(DeliveryAttempt, attempt);
+      }
+    }
+
+    await this.eventEmitter.emitAsync('order.status.changed', {
+      order,
+      operatorId: shipper?.id,
+      status: 'FAILED',
+      note: `Báo cáo sự cố: ${reason}. Mô tả: ${description}`,
+    });
 
     const incident = this.incidentRepository.create({
       order,
@@ -62,10 +98,21 @@ export class IncidentsService {
     return this.incidentRepository.save(incident);
   }
 
-  async findAll(page: number = 1, limit: number = 10, type?: string) {
+  async findAll(
+    page: number = 1,
+    limit: number = 10,
+    type?: string,
+    hubId?: string,
+    search?: string,
+    currentUser?: { userId: string; role?: string; hubId?: string },
+  ) {
     const query = this.incidentRepository
       .createQueryBuilder('incident')
       .leftJoinAndSelect('incident.order', 'order')
+      .leftJoinAndSelect('order.pickup_hub', 'pickup_hub')
+      .leftJoinAndSelect('order.shipper', 'orderShipper')
+      .leftJoinAndSelect('order.shipment', 'shipment')
+      .leftJoinAndSelect('shipment.shipper', 'shipmentShipper')
       .leftJoinAndSelect('incident.shipper', 'shipper')
       .leftJoinAndSelect('incident.resolvedBy', 'resolvedBy')
       .orderBy('incident.created_at', 'DESC');
@@ -74,16 +121,46 @@ export class IncidentsService {
       query.andWhere('incident.incident_type = :type', { type });
     }
 
+    const activeHubId =
+      currentUser?.role === 'HUB_COORDINATOR' && currentUser?.hubId
+        ? currentUser.hubId
+        : hubId;
+
+    if (activeHubId && activeHubId !== 'ALL') {
+      query.andWhere('pickup_hub.id = :activeHubId', { activeHubId });
+    }
+
+    if (search) {
+      const searchPattern = `%${search}%`;
+      query.andWhere(
+        '(order.tracking_number ILIKE :search OR shipper.full_name ILIKE :search OR shipmentShipper.full_name ILIKE :search OR orderShipper.full_name ILIKE :search OR incident.reason ILIKE :search)',
+        { search: searchPattern },
+      );
+    }
+
     const [items, totalItems] = await query
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
 
+    // Ensure shipper fallback if incident.shipper is null in legacy records
+    const mappedItems = items.map((inc) => {
+      const effectiveShipper =
+        inc.shipper ||
+        inc.order?.shipper ||
+        inc.order?.shipment?.shipper ||
+        null;
+      return {
+        ...inc,
+        shipper: effectiveShipper,
+      };
+    });
+
     return {
-      data: items,
+      data: mappedItems,
       meta: {
         totalItems,
-        itemCount: items.length,
+        itemCount: mappedItems.length,
         itemsPerPage: limit,
         totalPages: Math.ceil(totalItems / limit),
         currentPage: page,
@@ -106,6 +183,7 @@ export class IncidentsService {
         relations: {
           order: {
             pickup_hub: true,
+            shipment: true,
           },
         },
       });
@@ -115,12 +193,12 @@ export class IncidentsService {
       }
 
       const resolvedBy = await queryRunner.manager.findOne(User, {
-        where: { id: resolveDto.resolvedById },
+        where: { id: currentUser.userId },
       });
 
       if (!resolvedBy) {
         throw new NotFoundException(
-          `User with ID ${resolveDto.resolvedById} not found`,
+          `User with ID ${currentUser.userId} not found`,
         );
       }
 
@@ -133,6 +211,18 @@ export class IncidentsService {
         throw new ForbiddenException(
           'Bạn chỉ có quyền duyệt sự cố cho đơn hàng thuộc bưu cục của mình!',
         );
+      }
+
+      let oldShipmentId: string | null = null;
+      if (
+        resolveDto.action === ResolveAction.REDELIVERY ||
+        resolveDto.action === ResolveAction.RETURN ||
+        resolveDto.action === ResolveAction.COMPENSATION
+      ) {
+        if (order.shipment) {
+          oldShipmentId = order.shipment.id;
+          order.shipment = null as any;
+        }
       }
 
       // The action can be REDELIVERY (set Order current_status to AT_HUB), RETURN (set to RETURN_TO_SENDER), COMPENSATION (set to DAMAGED_DESTROYED). Update Incident status to RESOLVED_REDELIVERY etc.
@@ -172,11 +262,34 @@ export class IncidentsService {
 
       this.eventEmitter.emit('order.status.changed', {
         order,
-        userId: resolvedBy.id,
-        newStatus: order.current_status,
+        operatorId: resolvedBy.id,
+        status: order.current_status,
         note: eventStatusNote,
         manager: queryRunner.manager,
       });
+
+      // Nếu đơn hàng bị gỡ khỏi chuyến xe, kiểm tra xem chuyến xe đó đã hoàn thành chưa
+      if (oldShipmentId) {
+        const remainingOrders = await queryRunner.manager.find(Order, {
+          where: { shipment: { id: oldShipmentId } },
+        });
+
+        const allCompleted = remainingOrders.every(
+          (o) =>
+            o.current_status === 'FINISHED' ||
+            o.current_status === 'RETURNING' ||
+            o.current_status === 'RETURNED' ||
+            o.current_status === 'CANCELLED',
+        );
+
+        if (remainingOrders.length === 0 || allCompleted) {
+          await queryRunner.manager.update(
+            Shipment,
+            { id: oldShipmentId },
+            { status: 'COMPLETED' },
+          );
+        }
+      }
 
       await queryRunner.commitTransaction();
       return updatedIncident;

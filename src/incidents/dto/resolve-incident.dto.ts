@@ -1,10 +1,4 @@
-import {
-  IsString,
-  IsNotEmpty,
-  IsEnum,
-  IsOptional,
-  IsUUID,
-} from 'class-validator';
+import { IsString, IsNotEmpty, IsEnum, IsOptional } from 'class-validator';
 
 export enum ResolveAction {
   REDELIVERY = 'REDELIVERY',
@@ -21,8 +15,4 @@ export class ResolveIncidentDto {
   @IsString()
   @IsOptional()
   resolution_notes?: string;
-
-  @IsUUID()
-  @IsNotEmpty()
-  resolvedById!: string; // The ID of the admin/user who resolves it
 }

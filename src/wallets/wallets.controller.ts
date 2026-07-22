@@ -41,8 +41,55 @@ export class WalletsController {
 
   @Get('me')
   @Roles('SHIPPER')
-  async findMyWallet(@Request() req: { user: { sub: string } }) {
-    return await this.walletsService.findMyWallet(req.user.sub);
+  async findMyWallet(@Request() req: { user: { userId: string } }) {
+    return await this.walletsService.findMyWallet(req.user.userId);
+  }
+
+  @Get('me/stats')
+  @Roles('SHIPPER')
+  async getMyStats(
+    @Request() req: { user: { userId: string } },
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return await this.walletsService.getMyStats(
+      req.user.userId,
+      startDate,
+      endDate,
+    );
+  }
+
+  @Get('me/transactions')
+  @Roles('SHIPPER')
+  async getMyWalletTransactions(
+    @Request() req: { user: { userId: string } },
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = parseInt(page || '1', 10);
+    const limitNum = parseInt(limit || '10', 10);
+    const wallet = await this.walletsService.findMyWallet(req.user.userId);
+    return await this.walletsService.getWalletTransactions(
+      wallet.id,
+      pageNum,
+      limitNum,
+    );
+  }
+
+  @Get(':id/transactions')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  async getWalletTransactions(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = parseInt(page || '1', 10);
+    const limitNum = parseInt(limit || '10', 10);
+    return await this.walletsService.getWalletTransactions(
+      id,
+      pageNum,
+      limitNum,
+    );
   }
 
   @Get('requests')
@@ -56,7 +103,7 @@ export class WalletsController {
   @Post('requests')
   @Roles('SHIPPER', 'HUB_COORDINATOR')
   async createRequest(
-    @Request() req: { user: { sub: string } },
+    @Request() req: { user: { userId: string } },
     @Body()
     body: {
       type: string;
@@ -66,16 +113,22 @@ export class WalletsController {
       remarks?: string;
     },
   ) {
-    return await this.walletsService.createRequest(req.user.sub, body);
+    return await this.walletsService.createRequest(req.user.userId, body);
   }
 
   @Patch('requests/:id/approve')
   @Roles('ADMIN', 'HUB_COORDINATOR')
-  async approveRequest(
+  async processRequest(
     @Param('id') id: string,
-    @Request() req: { user: { sub: string } },
+    @Request() req: { user: { userId: string } },
     @Body() body: { status: string; remarks?: string },
   ) {
-    return await this.walletsService.approveRequest(id, req.user.sub, body);
+    return await this.walletsService.approveRequest(id, req.user.userId, body);
+  }
+
+  @Post('shippers/:shipperId/remit')
+  @Roles('ADMIN', 'HUB_COORDINATOR')
+  async remitAllShipperCod(@Param('shipperId') shipperId: string) {
+    return await this.walletsService.remitAllShipperCod(shipperId);
   }
 }

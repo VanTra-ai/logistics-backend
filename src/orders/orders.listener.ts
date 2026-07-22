@@ -6,6 +6,7 @@ import { Order } from './order.entity';
 
 export interface OrderStatusChangedEvent {
   order: Order;
+  operatorId?: string;
   status: string;
   note: string;
   lat?: number;
@@ -20,11 +21,13 @@ export class OrdersListener {
 
   @OnEvent('order.status.changed')
   async handleOrderStatusChangedEvent(event: OrderStatusChangedEvent) {
-    const { order, status, note, lat, long, imageUrl, manager } = event;
+    const { order, operatorId, status, note, lat, long, imageUrl, manager } =
+      event;
 
     if (manager) {
       await this.trackingsService.addTrackingRecordWithManager(manager, {
         order,
+        operatorId,
         status,
         note,
         lat,
@@ -34,6 +37,7 @@ export class OrdersListener {
     } else {
       await this.trackingsService.addTrackingRecord({
         order,
+        operatorId,
         status,
         note,
         lat,

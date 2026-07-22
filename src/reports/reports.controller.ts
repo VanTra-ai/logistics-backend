@@ -34,12 +34,36 @@ export class ReportsController {
   }
 
   @Get('shipper-kpi')
-  getShipperKpi() {
-    return this.reportsService.getShipperKpi();
+  @Roles('ADMIN')
+  getShipperKpi(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.reportsService.getShipperLeaderboard(
+      startDate,
+      endDate,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 10,
+    );
   }
 
   @Get('warehouse-kpi')
-  getWarehouseKpi() {
-    return this.reportsService.getWarehouseKpi();
+  @Roles('ADMIN')
+  getWarehouseKpi(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.reportsService.getHubPerformance(startDate, endDate);
+  }
+
+  @Get('pnl-by-hub')
+  @Roles('ADMIN')
+  getPnlByHub(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.reportsService.getPnlByHub(startDate, endDate);
   }
 }

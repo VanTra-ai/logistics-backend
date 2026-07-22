@@ -29,6 +29,8 @@ export class FinanceService implements OnModuleInit {
         hub_commission_percent: 15.0,
         shipper_payout_flat: 3500,
         shipper_payout_percent: 10.0,
+        shipper_pickup_payout: 2500,
+        shipper_return_payout: 2500,
       });
       await this.tariffRepository.save(defaultTariff);
     }
@@ -58,6 +60,8 @@ export class FinanceService implements OnModuleInit {
         hub_commission_percent: 15.0,
         shipper_payout_flat: 3500,
         shipper_payout_percent: 10.0,
+        shipper_pickup_payout: 2500,
+        shipper_return_payout: 2500,
       });
       await this.tariffRepository.save(defaultTariff);
     }

@@ -7,6 +7,8 @@ import {
   Body,
   UseGuards,
   Get,
+  Request,
+  Query,
 } from '@nestjs/common';
 import {
   ShipmentsService,
@@ -41,6 +43,25 @@ export class ShipmentsController {
   async getAllShipments() {
     const data = await this.shipmentsService.findAllShipments();
     return { data };
+  }
+
+  @Get('me')
+  @Roles('SHIPPER')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  async getMyShipments(
+    @Request() req: { user: { userId: string } },
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('date') date?: string,
+  ) {
+    const pageNum = parseInt(page || '1', 10);
+    const limitNum = parseInt(limit || '10', 10);
+    return await this.shipmentsService.findMyShipments(
+      req.user.userId,
+      pageNum,
+      limitNum,
+      date,
+    );
   }
 
   @Patch(':id/orders')
@@ -112,7 +133,10 @@ export class ShipmentsController {
   @Patch(':id/cancel')
   @Roles('ADMIN', 'HUB_COORDINATOR')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  async cancelShipment(@Param('id') id: string) {
-    return await this.shipmentsService.cancelShipment(id);
+  async cancelShipment(
+    @Param('id') id: string,
+    @Request() req: { user: { userId: string } },
+  ) {
+    return await this.shipmentsService.cancelShipment(id, req.user.userId);
   }
 }

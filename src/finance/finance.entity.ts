@@ -90,6 +90,22 @@ export class FinanceTariff {
   })
   shipper_payout_percent!: number; // % Phí giao hàng tài xế nhận (nếu tính theo %)
 
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 2500,
+    transformer: new ColumnNumericTransformer(),
+  })
+  shipper_pickup_payout!: number; // Thù lao lấy hàng thành công (mặc định 2,500đ)
+
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 2500,
+    transformer: new ColumnNumericTransformer(),
+  })
+  shipper_return_payout!: number; // Thù lao trả hàng thành công (mặc định 2,500đ)
+
   @CreateDateColumn()
   created_at!: Date;
 

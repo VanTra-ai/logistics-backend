@@ -1,10 +1,17 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThan } from 'typeorm';
 import { User } from '../users/user.entity';
+import { PasswordResetOtp } from './password-reset-otp.entity';
+import { MailService } from '../common/mail.service';
 
 export class LoginDto {
   email!: string;
@@ -16,8 +23,11 @@ export class AuthService {
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @InjectRepository(PasswordResetOtp)
+    private otpRepository: Repository<PasswordResetOtp>,
     private usersService: UsersService,
     private jwtService: JwtService,
+    private mailService: MailService,
   ) {}
 
   async login(loginDto: LoginDto) {
@@ -116,5 +126,92 @@ export class AuthService {
         'Refresh token đã hết hạn hoặc không hợp lệ, vui lòng đăng nhập lại!',
       );
     }
+  }
+
+  async requestForgotPasswordOtp(email: string) {
+    const user = await this.usersRepository.findOne({ where: { email } });
+    if (!user) {
+      throw new NotFoundException(
+        'Email này chưa được đăng ký trong hệ thống!',
+      );
+    }
+
+    // 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Invalidate prior unused OTPs
+    await this.otpRepository.update(
+      { email, is_used: false },
+      { is_used: true },
+    );
+
+    const newOtp = this.otpRepository.create({
+      email,
+      otp,
+      expires_at,
+    });
+    await this.otpRepository.save(newOtp);
+
+    // Send HTML OTP Email via Nodemailer/SMTP
+    await this.mailService.sendOtpEmail(email, otp);
+
+    return {
+      message: 'Mã OTP 6 chữ số đã được gửi đến email của bạn!',
+      email,
+      otp: process.env.NODE_ENV !== 'production' ? otp : undefined,
+    };
+  }
+
+  async verifyForgotPasswordOtp(email: string, otp: string) {
+    const validOtp = await this.otpRepository.findOne({
+      where: {
+        email,
+        otp,
+        is_used: false,
+        expires_at: MoreThan(new Date()),
+      },
+    });
+
+    if (!validOtp) {
+      throw new BadRequestException('Mã OTP không chính xác hoặc đã hết hạn!');
+    }
+
+    return { message: 'Mã OTP hợp lệ!' };
+  }
+
+  async resetPasswordWithOtp(dto: {
+    email: string;
+    otp: string;
+    newPassword: string;
+  }) {
+    const validOtp = await this.otpRepository.findOne({
+      where: {
+        email: dto.email,
+        otp: dto.otp,
+        is_used: false,
+        expires_at: MoreThan(new Date()),
+      },
+    });
+
+    if (!validOtp) {
+      throw new BadRequestException('Mã OTP không chính xác hoặc đã hết hạn!');
+    }
+
+    const user = await this.usersRepository.findOne({
+      where: { email: dto.email },
+    });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại!');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+    await this.usersRepository.update(user.id, {
+      password_hash: hashedPassword,
+    });
+
+    await this.otpRepository.update(validOtp.id, { is_used: true });
+
+    return { message: 'Đặt lại mật khẩu thành công! Vui lòng đăng nhập lại.' };
   }
 }

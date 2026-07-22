@@ -6,6 +6,7 @@ import {
   ManyToOne,
 } from 'typeorm';
 import { Order } from '../orders/order.entity';
+import { User } from '../users/user.entity';
 import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('tracking_history')
@@ -16,6 +17,10 @@ export class TrackingHistory {
   // Quan hệ với đơn hàng để biết đây là lịch sử của đơn nào
   @ManyToOne(() => Order, (order) => order.id)
   order!: Order;
+
+  // Người thực hiện thao tác (Admin, Shipper, hoặc null nếu là hệ thống)
+  @ManyToOne(() => User, { nullable: true })
+  operator!: User;
 
   // Trạng thái của đơn hàng tại thời điểm này (PENDING, DELIVERING, FINISHED...)
   @Column()

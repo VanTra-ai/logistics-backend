@@ -3,9 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, EntityManager } from 'typeorm';
 import { TrackingHistory } from './tracking.entity';
 import { Order } from '../orders/order.entity';
+import { User } from '../users/user.entity';
 
 interface TrackingData {
   order: Order;
+  operatorId?: string;
   status: string;
   note?: string;
   lat?: number;
@@ -23,6 +25,7 @@ export class TrackingsService {
   async addTrackingRecord(data: TrackingData): Promise<TrackingHistory> {
     const newTracking = this.trackingsRepository.create({
       order: data.order,
+      operator: data.operatorId ? { id: data.operatorId } : undefined,
       status: data.status,
       note: data.note || '',
       lat: data.lat,
@@ -38,6 +41,7 @@ export class TrackingsService {
   ): Promise<TrackingHistory> {
     const newTracking = manager.create(TrackingHistory, {
       order: data.order,
+      operator: data.operatorId ? ({ id: data.operatorId } as User) : undefined,
       status: data.status,
       note: data.note || '',
       lat: data.lat,
@@ -50,6 +54,7 @@ export class TrackingsService {
   async findByOrderId(orderId: string): Promise<TrackingHistory[]> {
     return await this.trackingsRepository.find({
       where: { order: { id: orderId } },
+      relations: { operator: true },
       order: { created_at: 'DESC' },
     });
   }

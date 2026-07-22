@@ -9,6 +9,7 @@ import {
 import { User } from '../users/user.entity';
 import { Hub } from '../hubs/hub.entity';
 import { Order } from '../orders/order.entity';
+import { Vehicle } from '../vehicles/vehicle.entity';
 import { ColumnNumericTransformer } from '../common/utils/column-numeric-transformer';
 
 @Entity('shipments')
@@ -48,9 +49,17 @@ export class Shipment {
   @ManyToOne(() => Hub, { nullable: true })
   destination_hub!: Hub;
 
-  // Trạng thái chuyến xe (PENDING, IN_TRANSIT, COMPLETED)
+  // Trạng thái chuyến xe (PENDING, IN_TRANSIT, COMPLETED, CANCELLED)
   @Column({ default: 'PENDING' })
   status!: string;
+
+  // Loại chuyến xe: PICKUP (lấy hàng), DELIVERY (giao hàng), RETURN (hoàn hàng)
+  @Column({ default: 'DELIVERY' })
+  type!: string;
+
+  // Phương tiện được sử dụng (link tới Vehicle master data)
+  @ManyToOne(() => Vehicle, { nullable: true })
+  vehicle!: Vehicle | null;
 
   // Danh sách các đơn hàng nằm trên chuyến xe này
   @OneToMany(() => Order, (order) => order.shipment)

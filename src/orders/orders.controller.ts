@@ -158,8 +158,18 @@ export class OrdersController {
   @Get('statistics')
   @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
   @UseGuards(RolesGuard)
-  async getStatistics() {
-    return await this.ordersService.getStatistics();
+  async getStatistics(
+    @Request() req: { user: { userId: string; role: string; hubId?: string } },
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('hubId') hubId?: string,
+  ) {
+    return await this.ordersService.getStatistics(
+      req.user,
+      startDate,
+      endDate,
+      hubId,
+    );
   }
 
   /**
@@ -191,7 +201,7 @@ export class OrdersController {
   async cancelOrder(
     @Param('id') id: string,
     @Body('reason') reason: string,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const role = req.user.role;
     let cancelledBy: 'SHIPPER' | 'ADMIN';
@@ -201,7 +211,12 @@ export class OrdersController {
       cancelledBy = 'ADMIN';
     }
 
-    return await this.ordersService.cancelOrder(id, reason, cancelledBy);
+    return await this.ordersService.cancelOrder(
+      id,
+      reason,
+      cancelledBy,
+      req.user.userId,
+    );
   }
 
   @Patch(':id/assign')
@@ -318,7 +333,7 @@ export class OrdersController {
   async retryDelivery(
     @Param('id') id: string,
     @Body() retryOrderDto: RetryOrderDto,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const actor =
       req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Điều phối viên';
@@ -326,6 +341,7 @@ export class OrdersController {
       id,
       retryOrderDto,
       actor,
+      req.user.userId,
     );
 
     return {
@@ -340,7 +356,7 @@ export class OrdersController {
   async returnToSender(
     @Param('id') id: string,
     @Body() rtsOrderDto: RtsOrderDto,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const actor =
       req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Điều phối viên';
@@ -348,6 +364,7 @@ export class OrdersController {
       id,
       rtsOrderDto,
       actor,
+      req.user.userId,
     );
 
     return {
@@ -361,12 +378,13 @@ export class OrdersController {
   @UseGuards(RolesGuard)
   async remitCOD(
     @Body() remitOrdersDto: RemitOrdersDto,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const actor = req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Kế toán';
     const result = await this.ordersService.remitCOD(
       remitOrdersDto.order_ids,
       actor,
+      req.user.userId,
     );
 
     return {
@@ -381,13 +399,14 @@ export class OrdersController {
   async updateDimensions(
     @Param('id') id: string,
     @Body() updateDimensionsDto: UpdateDimensionsDto,
-    @Request() req: { user: { role: string } },
+    @Request() req: { user: { userId: string; role: string } },
   ) {
     const actor = req.user.role === 'ADMIN' ? 'Quản trị viên' : 'Nhân viên';
     const order = await this.ordersService.updateDimensions(
       id,
       updateDimensionsDto,
       actor,
+      req.user.userId,
     );
 
     return {
@@ -413,5 +432,14 @@ export class OrdersController {
   @UseGuards(RolesGuard)
   async deleteOrder(@Param('id') id: string) {
     return await this.ordersService.deleteOrder(id);
+  }
+
+  @Get(':id/delivery-attempts')
+  async getDeliveryAttempts(@Param('id') id: string) {
+    const attempts = await this.ordersService.getDeliveryAttempts(id);
+    return {
+      message: 'Lấy lịch sử giao hàng thành công',
+      data: attempts,
+    };
   }
 }

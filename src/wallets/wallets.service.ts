@@ -10,6 +10,7 @@ import { Transaction } from './transaction.entity';
 import { WalletRequest } from './wallet-request.entity';
 import { User } from '../users/user.entity';
 import { Order } from '../orders/order.entity';
+import { DeliveryAttempt } from '../shipments/delivery-attempt.entity';
 
 @Injectable()
 export class WalletsService {
@@ -109,17 +110,139 @@ export class WalletsService {
     };
   }
 
-  async findMyWallet(userId: string) {
-    const wallet = await this.walletsRepository.findOne({
-      where: { user: { id: userId } },
-      relations: { user: { hub: true } },
-    });
+  async getMyStats(userId: string, startDateStr?: string, endDateStr?: string) {
+    const wallet = await this.findMyWallet(userId);
 
-    if (!wallet) {
-      throw new NotFoundException('Không tìm thấy ví cho tài khoản của bạn');
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (startDateStr) {
+      startDate = new Date(startDateStr);
+      startDate.setHours(0, 0, 0, 0);
+    }
+    if (endDateStr) {
+      endDate = new Date(endDateStr);
+      endDate.setHours(23, 59, 59, 999);
     }
 
-    return wallet;
+    const incomeQuery = this.dataSource.manager
+      .createQueryBuilder(Transaction, 'tx')
+      .select('SUM(tx.amount)', 'total')
+      .leftJoin('tx.wallet', 'wallet')
+      .where('wallet.id = :walletId', { walletId: wallet.id })
+      .andWhere('tx.type = :type', { type: 'COMMISSION_EARNED' });
+
+    if (startDate && endDate) {
+      incomeQuery.andWhere('tx.created_at BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      });
+    } else if (startDate) {
+      incomeQuery.andWhere('tx.created_at >= :startDate', { startDate });
+    } else if (endDate) {
+      incomeQuery.andWhere('tx.created_at <= :endDate', { endDate });
+    }
+
+    const incomeResult = await incomeQuery.getRawOne<{
+      total: string | number | null;
+    }>();
+    const expectedIncome = Number(incomeResult?.total || 0);
+
+    const remitQuery = this.dataSource.manager
+      .createQueryBuilder(Transaction, 'tx')
+      .select('SUM(tx.amount)', 'total')
+      .leftJoin('tx.wallet', 'wallet')
+      .where('wallet.id = :walletId', { walletId: wallet.id })
+      .andWhere('tx.type = :type', { type: 'REMIT' });
+
+    if (startDate && endDate) {
+      remitQuery.andWhere('tx.created_at BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      });
+    } else if (startDate) {
+      remitQuery.andWhere('tx.created_at >= :startDate', { startDate });
+    } else if (endDate) {
+      remitQuery.andWhere('tx.created_at <= :endDate', { endDate });
+    }
+
+    const remitResult = await remitQuery.getRawOne<{
+      total: string | number | null;
+    }>();
+    const remittedCod = Number(remitResult?.total || 0);
+
+    return {
+      wallet: {
+        income_balance: Number(wallet.income_balance),
+        cod_debt: Number(wallet.cod_debt),
+      },
+      stats: {
+        expectedIncome,
+        remittedCod,
+      },
+    };
+  }
+
+  async findMyWallet(userId: string) {
+    const existing = await this.walletsRepository
+      .createQueryBuilder('wallet')
+      .leftJoinAndSelect('wallet.user', 'user')
+      .leftJoinAndSelect('user.hub', 'hub')
+      .where('user.id = :userId', { userId })
+      .getOne();
+
+    if (existing) {
+      return existing;
+    }
+
+    // Tự động tạo ví nếu Shipper chưa có
+    const user = await this.dataSource.manager.findOne(User, {
+      where: { id: userId },
+      relations: { hub: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy tài khoản!');
+    }
+
+    const newWallet = this.walletsRepository.create({
+      user,
+      income_balance: 0,
+      cod_debt: 0,
+    });
+    const saved = await this.walletsRepository.save(newWallet);
+
+    // Reload with relations
+    const wallet = await this.walletsRepository
+      .createQueryBuilder('wallet')
+      .leftJoinAndSelect('wallet.user', 'user')
+      .leftJoinAndSelect('user.hub', 'hub')
+      .where('wallet.id = :id', { id: saved.id })
+      .getOne();
+
+    return wallet!;
+  }
+
+  async getWalletTransactions(walletId: string, page = 1, limit = 10) {
+    const [data, totalItems] = await this.dataSource.manager.findAndCount(
+      Transaction,
+      {
+        where: { wallet: { id: walletId } },
+        order: { created_at: 'DESC' },
+        skip: (page - 1) * limit,
+        take: limit,
+      },
+    );
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async getRequests(user?: { role: string; hubId?: string }) {
@@ -132,6 +255,85 @@ export class WalletsService {
       relations: { user: { hub: true } },
       order: { created_at: 'DESC' },
     });
+  }
+
+  async remitAllShipperCod(shipperId: string) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const shipper = await queryRunner.manager.findOne(User, {
+        where: { id: shipperId },
+      });
+      if (!shipper) throw new NotFoundException('Không tìm thấy tài xế!');
+
+      const wallet = await queryRunner.manager.findOne(Wallet, {
+        where: { user: { id: shipperId } },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!wallet) throw new NotFoundException('Không tìm thấy ví của tài xế!');
+
+      // Find all successful delivery attempts by this shipper for orders that have COLLECTED COD
+      const attempts = await queryRunner.manager.find(DeliveryAttempt, {
+        where: {
+          status: 'FINISHED',
+          shipper: { id: shipperId },
+          order: { cod_status: 'COLLECTED' },
+        },
+        relations: { order: true },
+      });
+
+      if (attempts.length === 0) {
+        throw new BadRequestException('Không có đơn hàng nào cần nộp COD!');
+      }
+
+      // Lọc các order duy nhất (để tránh trùng lặp nếu có 2 attempt FINISHED cho 1 order - though unlikely)
+      const orderMap = new Map<string, Order>();
+      for (const attempt of attempts) {
+        if (attempt.order && !orderMap.has(attempt.order.id)) {
+          orderMap.set(attempt.order.id, attempt.order);
+        }
+      }
+
+      const orders = Array.from(orderMap.values());
+
+      let totalCod = 0;
+      for (const order of orders) {
+        order.cod_status = 'REMITTED';
+        totalCod += Number(order.cod_amount);
+      }
+
+      await queryRunner.manager.save(Order, orders);
+
+      // Decrement cod_debt safely
+      wallet.cod_debt = Math.max(0, Number(wallet.cod_debt) - totalCod);
+      await queryRunner.manager.save(Wallet, wallet);
+
+      // Create transaction record
+      const transaction = queryRunner.manager.create(Transaction, {
+        wallet,
+        type: 'REMIT',
+        amount: totalCod,
+        status: 'COMPLETED',
+        description: `Thu hộ thành công tổng cộng ${totalCod.toLocaleString('vi-VN')}đ từ ${orders.length} đơn hàng.`,
+      });
+      await queryRunner.manager.save(Transaction, transaction);
+
+      await queryRunner.commitTransaction();
+
+      return {
+        message: `Đã thu thành công ${totalCod.toLocaleString('vi-VN')}đ từ tài xế ${shipper.full_name}`,
+        totalAmount: totalCod,
+        orderCount: orders.length,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async createRequest(

@@ -19,7 +19,7 @@ export class FinanceController {
   constructor(private readonly financeService: FinanceService) {}
 
   @Get('tariff')
-  @Roles('ADMIN', 'HUB_COORDINATOR')
+  @Roles('ADMIN', 'HUB_COORDINATOR', 'SHIPPER')
   async getTariff(@Query('hub_id') hubId?: string) {
     const data = await this.financeService.getTariff(hubId);
     return {
